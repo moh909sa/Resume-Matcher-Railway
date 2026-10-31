@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "apps/backend/app/routers/mobile_tailoring.py"
+      - "apps/backend/app/routers/resumes.py"
       - "apps/backend/app/services/supabase_backend.py"
       - "apps/backend/app/services/progress.py"
       - "apps/backend/app/services/mobile_progress.py"
@@ -16,6 +17,8 @@ on:
       - "apps/backend/tests/unit/test_mobile_tailoring_contract.py"
       - "apps/backend/pyproject.toml"
       - ".github/workflows/mobile-tailoring-tests.yml"
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
