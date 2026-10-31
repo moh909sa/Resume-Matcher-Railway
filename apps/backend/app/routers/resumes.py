@@ -1685,29 +1685,57 @@ async def _improve_preview_flow(
     )
 
 
+def _optional_writing_budget(remaining_seconds: float) -> float:
+    """Bound *optional* AI polish while reserving time to finalize and persist.
+
+    The core resume has already been tailored by this stage. A slow critic or
+    rewrite must not consume the operation's entire deadline and discard that
+    valuable result. Reserve 30 seconds for grounding/preview persistence.
+    Don't start another potentially billable model call for a tiny time window.
+    """
+    return min(45.0, max(0.0, remaining_seconds - 30.0))
+
+
 async def _run_tailor_writing_loop(
     improved_data: dict[str, Any],
     language: str,
     prompt_id: str,
     progress: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], WritingReport | None]:
-    """Critique the tailored resume; rewrite hard findings unless Light nudge.
+    """Best-effort writing polish; never sacrifice a completed core tailoring.
 
-    A failure keeps the tailored resume as it was (the report is then None).
+    The optional critic/rewrite gets its own bounded budget. If it stalls,
+    preserve the already-tailored content and let the existing final grounding
+    checks and durable preview registration finish within the main deadline.
     """
+    writing_budget = _optional_writing_budget(remaining_timeout())
+    if writing_budget < 15.0:
+        logger.info("Skipping optional writing polish to protect preview persistence")
+        return improved_data, None
+
     try:
-        loop = await run_writing_loop(
-            improved_data,
-            language=language,
-            rewrite=prompt_id != "nudge",
-            heavy=prompt_id == "heavy",
-            progress=progress,
-        )
+        async with asyncio.timeout(writing_budget):
+            loop = await run_writing_loop(
+                improved_data,
+                language=language,
+                rewrite=prompt_id != "nudge",
+                heavy=prompt_id == "heavy",
+                progress=progress,
+            )
         return loop.data, loop.report
     except (AIOperationDeadlineExceeded, PromptSizeError):
         raise
-    except Exception as e:
-        logger.warning("Writing loop failed, keeping the tailored text: %s", e)
+    except TimeoutError:
+        # A timeout of the *whole* operation is not a recoverable polish error.
+        # The remaining_timeout() check deliberately re-raises in that case.
+        remaining_timeout()
+        logger.warning("Optional writing polish timed out; preserving tailored preview")
+        return improved_data, None
+    except Exception as error:
+        logger.warning(
+            "Optional writing polish failed (%s); preserving tailored preview",
+            type(error).__name__,
+        )
         return improved_data, None
 
 
