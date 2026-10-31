@@ -400,6 +400,9 @@ class Settings(BaseSettings):
     # (Ollama, llama.cpp, …) often need longer than the 240s default; bounded to
     # [30, 1800]s so a stuck request can't hold a worker indefinitely.
     request_timeout_seconds: int = 240
+    # Durable mobile jobs do not hold a browser/iOS request open. Keep their
+    # quality budget separate from synchronous HTTP/proxy deadlines.
+    mobile_tailoring_timeout_seconds: int = Field(default=360, ge=60, le=1800)
     preview_ttl_seconds: int = Field(default=86400, ge=60, le=604800)
 
     @field_validator("preview_ttl_seconds", mode="before")

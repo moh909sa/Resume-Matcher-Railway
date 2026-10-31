@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import logging
+import time
 import unicodedata
 from collections.abc import Awaitable
 from datetime import datetime, timezone
@@ -110,7 +111,7 @@ from app.services.parser import (
     parse_resume_to_json,
     restore_dates_from_markdown,
 )
-from app.services.progress import progress_events, tracked_progress
+from app.services.progress import mark_writing_incomplete, progress_events, tracked_progress
 from app.services.refiner import (
     _extract_all_text,
     _keyword_in_text,
@@ -141,6 +142,10 @@ _PROCESSING_SHUTDOWN_GRACE_SECONDS = 1.0
 _PROCESSING_CLEANUP_TASKS: set[asyncio.Task[Any]] = set()
 REFINEMENT_FAILED_WARNING = "REFINEMENT_FAILED: Resume refinement was unavailable; the previous result was kept."
 DIFF_UNAVAILABLE_WARNING = "DIFF_UNAVAILABLE: Resume changes could not be calculated."
+WRITING_INCOMPLETE_WARNING = (
+    "Your tailored draft was saved, but the additional writing review or rewrite "
+    "could not finish. Please review the wording before saving or exporting."
+)
 
 
 async def _auto_create_tracker_application(
@@ -1345,6 +1350,7 @@ async def _run_preview_with_progress(
     progress: dict[str, str],
     detail: str,
 ) -> ImproveResumeResponse:
+    preview_timeout = remaining_timeout()
     try:
         return await asyncio.wait_for(
             _improve_preview_flow(
@@ -1355,7 +1361,7 @@ async def _run_preview_with_progress(
                 prompt_id=prompt_id,
                 progress=progress,
             ),
-            timeout=remaining_timeout(),
+            timeout=preview_timeout,
         )
     except PreviewConflictError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
@@ -1364,16 +1370,16 @@ async def _run_preview_with_progress(
         raise
     except asyncio.TimeoutError:
         logger.error(
-            "Improve preview timed out at stage=%s after %ss for resume %s / job %s",
+            "Improve preview timed out at stage=%s after %.3fs for resume %s / job %s",
             progress["stage"],
-            settings.request_timeout_seconds,
+            preview_timeout,
             request.resume_id,
             request.job_id,
         )
         raise HTTPException(
             status_code=504,
             detail=(
-                f"Resume tailoring timed out after {settings.request_timeout_seconds}s. "
+                f"Resume tailoring timed out after {preview_timeout:.0f}s. "
                 "If you are running a local LLM, raise REQUEST_TIMEOUT_SECONDS (and the "
                 "matching frontend NEXT_PUBLIC_REQUEST_TIMEOUT_MS); otherwise try a shorter "
                 "job description or a simpler prompt."
@@ -1581,6 +1587,8 @@ async def _improve_preview_flow(
     improved_data, writing = await _run_tailor_writing_loop(
         improved_data, language, prompt_id, progress
     )
+    if writing is None or progress.get("writing_incomplete") == "1":
+        response_warnings.append(WRITING_INCOMPLETE_WARNING)
 
     if original_resume_data:
         improved_data = finalize_ai_resume(
@@ -1693,7 +1701,9 @@ def _optional_writing_budget(remaining_seconds: float) -> float:
     valuable result. Reserve 30 seconds for grounding/preview persistence.
     Don't start another potentially billable model call for a tiny time window.
     """
-    return min(45.0, max(0.0, remaining_seconds - 30.0))
+    # Do not truncate Resume Matcher's critic + rewrite at an arbitrary 45s.
+    # They may use the rest of this operation's budget, less finalization time.
+    return max(0.0, remaining_seconds - 30.0)
 
 
 async def _run_tailor_writing_loop(
@@ -1710,9 +1720,11 @@ async def _run_tailor_writing_loop(
     """
     writing_budget = _optional_writing_budget(remaining_timeout())
     if writing_budget < 15.0:
+        mark_writing_incomplete(progress, "")
         logger.info("Skipping optional writing polish to protect preview persistence")
         return improved_data, None
 
+    started = time.monotonic()
     try:
         async with asyncio.timeout(writing_budget):
             loop = await run_writing_loop(
@@ -1722,6 +1734,11 @@ async def _run_tailor_writing_loop(
                 heavy=prompt_id == "heavy",
                 progress=progress,
             )
+        logger.info(
+            "Writing cycle finished: elapsed=%.3fs budget=%.3fs incomplete=%s",
+            time.monotonic() - started, writing_budget,
+            bool(progress and progress.get("writing_incomplete") == "1"),
+        )
         return loop.data, loop.report
     except (AIOperationDeadlineExceeded, PromptSizeError):
         raise
@@ -1729,9 +1746,11 @@ async def _run_tailor_writing_loop(
         # A timeout of the *whole* operation is not a recoverable polish error.
         # The remaining_timeout() check deliberately re-raises in that case.
         remaining_timeout()
+        mark_writing_incomplete(progress, (progress or {}).get("stage", ""))
         logger.warning("Optional writing polish timed out; preserving tailored preview")
         return improved_data, None
     except Exception as error:
+        mark_writing_incomplete(progress, (progress or {}).get("stage", ""))
         logger.warning(
             "Optional writing polish failed (%s); preserving tailored preview",
             type(error).__name__,

@@ -43,7 +43,18 @@ ENGINE_STAGE_TO_MOBILE_STEP = {
     "register_preview": "verify_review",
     "calculate_diff": "verify_review",
     "serialize_preview": "verify_review",
+    "critique_writing_incomplete": "critique_writing",
+    "rewrite_writing_incomplete": "rewrite_lines",
 }
+
+
+def _incomplete_steps(history: list[str] | None) -> set[str]:
+    """A later stage does not prove a cancelled writing step completed."""
+    return {
+        ENGINE_STAGE_TO_MOBILE_STEP[stage]
+        for stage in history or []
+        if stage in ("critique_writing_incomplete", "rewrite_writing_incomplete")
+    }
 
 
 def timeline_from_engine_history(history: list[str] | None) -> dict[str, Any]:
@@ -55,7 +66,8 @@ def timeline_from_engine_history(history: list[str] | None) -> dict[str, Any]:
             visited.append(step)
     return {
         "current_step": visited[-1] if visited else None,
-        "completed_steps": visited[:-1],
+        "completed_steps": [step for step in visited[:-1]
+                            if step not in _incomplete_steps(history)],
         "visited_steps": visited,
     }
 
@@ -87,9 +99,11 @@ def finished_progress_update(
     progress_id: str, *, succeeded: bool, tailoring_id: str | None = None
 ) -> dict[str, Any]:
     """The final status is set only after the draft was actually persisted."""
-    timeline = timeline_from_engine_history(get_progress_history(progress_id))
+    history = get_progress_history(progress_id)
+    timeline = timeline_from_engine_history(history)
     if succeeded:
-        timeline["completed_steps"] = timeline["visited_steps"]
+        timeline["completed_steps"] = [step for step in timeline["visited_steps"]
+                                       if step not in _incomplete_steps(history)]
         timeline["current_step"] = None
     timeline["stage"] = "complete" if succeeded else "failed"
     timeline["status"] = "succeeded" if succeeded else "failed"

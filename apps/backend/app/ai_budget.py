@@ -23,14 +23,15 @@ class AIOperationDeadlineExceeded(TimeoutError):
 
 def remaining_timeout(preferred: float | None = None) -> float:
     """Cap a stage timeout at the operation's remaining monotonic budget."""
-    limit = settings.request_timeout_seconds if preferred is None else preferred
     deadline = _deadline.get()
     if deadline is None:
-        return float(limit)
+        return float(settings.request_timeout_seconds if preferred is None else preferred)
     remaining = deadline - asyncio.get_running_loop().time()
     if remaining <= 0:
         raise AIOperationDeadlineExceeded("AI operation deadline exceeded")
-    return min(float(limit), remaining)
+    # A background operation may intentionally have a longer budget than HTTP.
+    # Only an explicitly requested per-call limit should shorten that budget.
+    return remaining if preferred is None else min(float(preferred), remaining)
 
 
 @asynccontextmanager

@@ -25,6 +25,7 @@ from app.prompts.writing import (
 from app.schemas.models import ImproveDiffResult, ResumeChange
 from app.schemas.writing import CriticNote, WritingFinding, WritingReport
 from app.services.improver import _resolve_path, _sanitize_user_input, apply_diffs
+from app.services.progress import mark_writing_incomplete
 from app.services.writing_quality import (
     check_writing,
     fact_violations,
@@ -194,6 +195,7 @@ async def run_writing_loop(
     except Exception as e:
         if raise_errors:
             raise
+        mark_writing_incomplete(progress, "critique_writing")
         logger.warning("Writing critique failed, using code rules only: %s", e)
 
     targets: list[tuple[str, str, list[str]]] = []
@@ -222,6 +224,7 @@ async def run_writing_loop(
         except Exception as e:
             if raise_errors:
                 raise
+            mark_writing_incomplete(progress, "rewrite_writing")
             logger.warning("Writing rewrite failed, keeping the critiqued text: %s", e)
             changes = []
         accepted: list[ResumeChange] = []
