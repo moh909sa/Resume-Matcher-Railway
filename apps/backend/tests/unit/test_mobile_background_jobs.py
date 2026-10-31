@@ -156,3 +156,62 @@ async def test_duplicate_active_user_with_different_input_conflicts():
     with pytest.raises(MobileJobConflict):
         await backend.enqueue_mobile_tailoring(
             owner, new_progress, resume, "My new job. " * 10, None, None)
+
+
+@pytest.mark.asyncio
+async def test_optional_writing_polish_skips_when_no_safe_time_remains(monkeypatch):
+    from app.routers import resumes as preview_api
+
+    ai = AsyncMock(side_effect=AssertionError("Do not bill optional AI"))
+    monkeypatch.setattr(preview_api, "remaining_timeout", lambda: 40.0)
+    monkeypatch.setattr(preview_api, "run_writing_loop", ai)
+    tailored = {"summary": "Relevant network engineering experience"}
+    result, report = await preview_api._run_tailor_writing_loop(
+        tailored, "en", "full", {}
+    )
+    assert result is tailored
+    assert report is None
+    ai.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_optional_writing_timeout_keeps_completed_tailoring(monkeypatch):
+    from app.routers import resumes as preview_api
+
+    async def stalled_polish(*_args, **_kwargs):
+        raise TimeoutError("Optional provider call stalled")
+
+    monkeypatch.setattr(preview_api, "remaining_timeout", lambda: 180.0)
+    monkeypatch.setattr(preview_api, "run_writing_loop", stalled_polish)
+    tailored = {"summary": "Already tailored and ready for final checks"}
+    result, report = await preview_api._run_tailor_writing_loop(
+        tailored, "en", "full", {}
+    )
+    assert result is tailored
+    assert report is None
+
+
+@pytest.mark.asyncio
+async def test_optional_writing_preserves_global_deadline_failure(monkeypatch):
+    from app.ai_budget import AIOperationDeadlineExceeded
+    from app.routers import resumes as preview_api
+
+    monkeypatch.setattr(preview_api, "remaining_timeout", lambda: 180.0)
+    monkeypatch.setattr(
+        preview_api, "run_writing_loop",
+        AsyncMock(side_effect=AIOperationDeadlineExceeded("Global timeout")),
+    )
+    with pytest.raises(AIOperationDeadlineExceeded):
+        await preview_api._run_tailor_writing_loop(
+            {"summary": "content"}, "en", "full", {}
+        )
+
+
+def test_optional_writing_reserves_finalization_time():
+    from app.routers.resumes import _optional_writing_budget
+
+    assert _optional_writing_budget(240) == 45
+    assert _optional_writing_budget(100) == 45
+    assert _optional_writing_budget(60) == 30
+    assert _optional_writing_budget(40) == 10
+    assert _optional_writing_budget(25) == 0
