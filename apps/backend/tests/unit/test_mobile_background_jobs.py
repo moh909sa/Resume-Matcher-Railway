@@ -2,6 +2,8 @@
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import Any
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -210,8 +212,107 @@ async def test_optional_writing_preserves_global_deadline_failure(monkeypatch):
 def test_optional_writing_reserves_finalization_time():
     from app.routers.resumes import _optional_writing_budget
 
-    assert _optional_writing_budget(240) == 45
-    assert _optional_writing_budget(100) == 45
+    assert _optional_writing_budget(360) == 330
+    assert _optional_writing_budget(240) == 210
+    assert _optional_writing_budget(100) == 70
     assert _optional_writing_budget(60) == 30
     assert _optional_writing_budget(40) == 10
     assert _optional_writing_budget(25) == 0
+
+
+@pytest.mark.asyncio
+async def test_background_budget_is_not_shortened_by_http_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 360s worker must not silently become a 240s preview again."""
+    from app.ai_budget import operation_budget, remaining_timeout
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "request_timeout_seconds", 30)
+    async with operation_budget(360):
+        assert 350 < remaining_timeout() <= 360
+        assert remaining_timeout(10) <= 10
+        async with operation_budget(20):
+            assert 0 < remaining_timeout() <= 20
+        assert 350 < remaining_timeout() <= 360
+    assert remaining_timeout() == 30
+
+
+def test_mobile_worker_has_a_separate_six_minute_default() -> None:
+    from app.config import Settings
+
+    settings = Settings(_env_file=None)
+    assert settings.mobile_tailoring_timeout_seconds == 360
+    assert settings.request_timeout_seconds == 240
+
+
+@pytest.mark.asyncio
+async def test_writing_gets_remaining_budget_and_preserves_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    from contextlib import asynccontextmanager
+    from app.routers import resumes as preview_api
+
+    received: list[float] = []
+
+    @asynccontextmanager
+    async def capture_timeout(seconds: float) -> AsyncIterator[None]:
+        received.append(seconds)
+        yield
+
+    polished = {"summary": "Improved wording"}
+    report = object()
+    monkeypatch.setattr(preview_api, "remaining_timeout", lambda: 330.0)
+    monkeypatch.setattr(preview_api.asyncio, "timeout", capture_timeout)
+    monkeypatch.setattr(preview_api, "run_writing_loop", AsyncMock(
+        return_value=SimpleNamespace(data=polished, report=report)))
+    result, returned_report = await preview_api._run_tailor_writing_loop(
+        {"summary": "Core tailoring"}, "en", "full", {})
+    assert received == [300.0]
+    assert result is polished
+    assert returned_report is report
+
+
+@pytest.mark.asyncio
+async def test_real_writing_cancellation_keeps_core_and_marks_step_incomplete(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    from app.routers import resumes as preview_api
+    from app.services.progress import StageTracker
+    from app.services.mobile_progress import timeline_from_engine_history
+
+    real_timeout = asyncio.timeout
+    cancelled = asyncio.Event()
+
+    async def blocked_rewrite(*args: Any, **kwargs: Any) -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(preview_api, "remaining_timeout", lambda: 330.0)
+    monkeypatch.setattr(preview_api.asyncio, "timeout", lambda _: real_timeout(0.01))
+    monkeypatch.setattr(preview_api, "run_writing_loop", blocked_rewrite)
+    tracker = StageTracker("critique_writing")
+    tracker["stage"] = "rewrite_writing"
+    core = {"summary": "Core tailoring"}
+    result, report = await preview_api._run_tailor_writing_loop(core, "en", "full", tracker)
+    assert cancelled.is_set()
+    assert result is core and report is None
+    assert tracker["writing_incomplete"] == "1"
+    tracker["stage"] = "register_preview"
+    timeline = timeline_from_engine_history(tracker.history)
+    assert "critique_writing" in timeline["completed_steps"]
+    assert "rewrite_lines" not in timeline["completed_steps"]
+
+
+@pytest.mark.asyncio
+async def test_critic_failure_marks_incomplete_without_changing_rewrite_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services import writing_loop
+    from app.services.progress import StageTracker
+
+    monkeypatch.setattr(writing_loop, "critique_writing", AsyncMock(side_effect=RuntimeError()))
+    monkeypatch.setattr(writing_loop, "check_writing", lambda *_: [])
+    monkeypatch.setattr(writing_loop, "hard_paths", lambda _: [])
+    monkeypatch.setattr(writing_loop, "iter_writing_units", lambda _: [])
+    monkeypatch.setattr(writing_loop, "writing_score", lambda *_: 100)
+    tracker = StageTracker("critique_writing")
+    result = await writing_loop.run_writing_loop({"summary": "Core"}, language="en", progress=tracker)
+    assert result.data["summary"] == "Core"
+    assert tracker["writing_incomplete"] == "1"
+    assert "critique_writing_incomplete" in tracker.history

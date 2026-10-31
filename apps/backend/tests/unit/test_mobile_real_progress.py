@@ -14,6 +14,19 @@ from app.services import mobile_progress
 from app.services.progress import StageTracker, get_progress_history, tracked_progress
 
 
+def test_saved_draft_does_not_mark_failed_writing_as_completed() -> None:
+    progress_id = str(uuid4())
+    with tracked_progress(progress_id, "critique_writing") as tracker:
+        tracker["stage"] = "critique_writing_incomplete"
+        tracker["stage"] = "rewrite_writing"
+        tracker["stage"] = "rewrite_writing_incomplete"
+        tracker["stage"] = "register_preview"
+        timeline = mobile_progress.finished_progress_update(progress_id, succeeded=True)
+        assert timeline["status"] == "succeeded"
+        assert timeline["visited_steps"] == ["critique_writing", "rewrite_lines", "verify_review"]
+        assert timeline["completed_steps"] == ["verify_review"]
+
+
 def test_engine_stage_history_keeps_fast_transitions_and_ignores_timer():
     tracker = StageTracker("load_job_keywords")
     tracker["stage"] = "load_original_resume"

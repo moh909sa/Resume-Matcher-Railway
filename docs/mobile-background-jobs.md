@@ -53,6 +53,21 @@ synchronous. New Draftbit builds must use the durable queue described below.
 
 ## Safety and failure design
 
+- Durable mobile tailoring has its own `MOBILE_TAILORING_TIMEOUT_SECONDS`
+  budget (default 360 seconds, configurable from 60 to 1800). Synchronous
+  HTTP operations retain `REQUEST_TIMEOUT_SECONDS` (default 240). An active
+  background deadline is not shortened by the HTTP default; explicit provider
+  call timeouts and nested earlier deadlines still apply.
+- Resume Matcher's unchanged critic/rewrite algorithm may use the remaining
+  operation time, reserving 30 seconds for final checks and draft persistence.
+  There is no separate 45-second writing cap. If less than 15 seconds of safe
+  writing time remains, no additional writing call is started.
+- If writing fails or exhausts its allowance, the core tailored draft is kept
+  and the review `warnings` explains that writing did not finish. Failed writing
+  steps stay out of `completed_steps`, even when draft persistence succeeds.
+  Neither deadline expiry nor a worker restart automatically resubmits the
+  entire AI operation. Provider-level retry policies remain unchanged.
+
 - One queued/running job per account (partial unique DB index); repeated inputs
   reuse the same in-flight or recent completed job. User-provided UUID is a
   stable idempotency key, not authorization.

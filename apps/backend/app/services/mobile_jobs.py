@@ -49,8 +49,8 @@ async def process_queued_mobile_job(backend: SupabaseBackend, job: dict[str, Any
     result_status = "failed"
     failure_code: str | None = "processing_failed"
     try:
-        # Use the same production AI budget as synchronous tailoring.
-        async with operation_budget(settings.request_timeout_seconds):
+        # The durable job owns its budget independently of HTTP/proxy timeouts.
+        async with operation_budget(settings.mobile_tailoring_timeout_seconds):
             with resume_owner(user_id):
                 if not source_id or await backend.get_record(user_id, source_id) is None:
                     raise RuntimeError("Original CV no longer exists")

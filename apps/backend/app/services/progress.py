@@ -37,6 +37,15 @@ _REGISTRATION_WAIT_SECONDS = 15.0
 _POLL_SECONDS = 0.25
 
 
+def mark_writing_incomplete(progress: dict[str, str] | None, stage: str) -> None:
+    """Record a failed writing step instead of inferring success from transition."""
+    if progress is None:
+        return
+    progress["writing_incomplete"] = "1"
+    if stage in ("critique_writing", "rewrite_writing"):
+        progress["stage"] = f"{stage}_incomplete"
+
+
 @contextmanager
 def tracked_progress(progress_id: str | None, stage: str) -> Iterator[dict[str, str]]:
     """Yield the stage dict for one operation, registered when an id is given."""
