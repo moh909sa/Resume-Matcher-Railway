@@ -145,7 +145,10 @@ class MobileTailoringWorker:
         if settings.mobile_api_enabled and self._task is None:
             self._task = asyncio.create_task(
                 self._loop(), name="durable-mobile-tailoring-worker")
-            logger.info("Durable mobile tailoring worker started")
+            logger.info(
+                "Durable mobile tailoring worker started (budget=%ss)",
+                settings.mobile_tailoring_timeout_seconds,
+            )
 
     async def stop(self) -> None:
         if self._task:

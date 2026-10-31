@@ -1,5 +1,5 @@
 """Authenticated resumable background tailoring and anti-double-charge contract."""
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, nullcontext
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -71,6 +71,16 @@ async def test_recovered_finished_job_reuses_saved_preview_without_ai():
 
 @pytest.mark.asyncio
 async def test_worker_success_persists_one_owned_draft(monkeypatch):
+    budgets: list[float] = []
+
+    @asynccontextmanager
+    async def capture_budget(seconds: float) -> AsyncIterator[None]:
+        budgets.append(seconds)
+        yield
+
+    monkeypatch.setattr(mobile_jobs.settings, "request_timeout_seconds", 30)
+    monkeypatch.setattr(mobile_jobs.settings, "mobile_tailoring_timeout_seconds", 360)
+    monkeypatch.setattr(mobile_jobs, "operation_budget", capture_budget)
     owner, resume, progress, job_id, tailoring, claim = (str(uuid4()) for _ in range(6))
     job = {"user_id": owner, "id": progress, "source_resume_id": resume,
            "job_description": "Network maintenance, reliability, safety. " * 3,
@@ -95,6 +105,7 @@ async def test_worker_success_persists_one_owned_draft(monkeypatch):
             "resume_preview": {"summary": "demo"}}))
     monkeypatch.setattr(mobile_jobs, "improve_resume_preview_endpoint", fake_engine)
     await mobile_jobs.process_queued_mobile_job(backend, job)
+    assert budgets == [360]
     assert backend.create_tailored_record.await_count == 1
     saved = backend.create_tailored_record.await_args.args[0]
     assert saved["progress_id"] == progress

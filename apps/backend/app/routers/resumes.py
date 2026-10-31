@@ -1350,6 +1350,7 @@ async def _run_preview_with_progress(
     progress: dict[str, str],
     detail: str,
 ) -> ImproveResumeResponse:
+    preview_timeout = remaining_timeout()
     try:
         return await asyncio.wait_for(
             _improve_preview_flow(
@@ -1360,7 +1361,7 @@ async def _run_preview_with_progress(
                 prompt_id=prompt_id,
                 progress=progress,
             ),
-            timeout=remaining_timeout(),
+            timeout=preview_timeout,
         )
     except PreviewConflictError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
@@ -1369,16 +1370,16 @@ async def _run_preview_with_progress(
         raise
     except asyncio.TimeoutError:
         logger.error(
-            "Improve preview timed out at stage=%s after %ss for resume %s / job %s",
+            "Improve preview timed out at stage=%s after %.3fs for resume %s / job %s",
             progress["stage"],
-            settings.request_timeout_seconds,
+            preview_timeout,
             request.resume_id,
             request.job_id,
         )
         raise HTTPException(
             status_code=504,
             detail=(
-                f"Resume tailoring timed out after {settings.request_timeout_seconds}s. "
+                f"Resume tailoring timed out after {preview_timeout:.0f}s. "
                 "If you are running a local LLM, raise REQUEST_TIMEOUT_SECONDS (and the "
                 "matching frontend NEXT_PUBLIC_REQUEST_TIMEOUT_MS); otherwise try a shorter "
                 "job description or a simpler prompt."
