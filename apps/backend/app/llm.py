@@ -877,7 +877,8 @@ def get_llm_config() -> LLMConfig:
     LLM_PROVIDER overrides it only alongside a nonblank LLM_MODEL.
     Absent selection fields and non-mobile installs retain saved-config priority.
     Mobile OpenRouter keys prefer LLM_API_KEY; other key rules use resolve_api_key.
-    Priority for reasoning_effort: config.json > env/settings
+    Explicit REASONING_EFFORT also wins in mobile mode; a blank value selects
+    the provider default. Otherwise config.json retains priority over settings.
 
     Runs a one-shot migration for existing gpt-5 users: if provider is openai,
     model contains 'gpt-5', and reasoning_effort is ABSENT from config.json
@@ -900,6 +901,7 @@ def get_llm_config() -> LLMConfig:
         else set()
     )
     model_override = "llm_model" in supplied and bool(settings.llm_model.strip())
+    effort_override = "reasoning_effort" in supplied
     # docker/start.sh exports LLM_PROVIDER=openai even when the operator did
     # not choose a provider. Require a model alongside it so this startup
     # default never replaces a saved selection on deployment.
@@ -930,7 +932,7 @@ def get_llm_config() -> LLMConfig:
     # existing configs. Gated on ABSENT key so users can opt out by clearing
     # the field (PUT handler persists an empty string on clear).
     if (
-        not (provider_override or model_override)
+        not (provider_override or model_override or effort_override)
         and provider == "openai"
         and "gpt-5" in model.lower()
         and "reasoning_effort" not in stored
@@ -957,7 +959,11 @@ def get_llm_config() -> LLMConfig:
         )
         api_key = ""
 
-    raw_re = stored.get("reasoning_effort", settings.reasoning_effort)
+    raw_re = (
+        settings.reasoning_effort
+        if effort_override
+        else stored.get("reasoning_effort", settings.reasoning_effort)
+    )
     # Normalize empty string to None — user explicitly cleared.
     reasoning_effort = raw_re if raw_re else None
 

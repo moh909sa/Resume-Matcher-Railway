@@ -7,9 +7,27 @@ In `pleasing-nurturing → production → Resume-Matcher → Variables`, set:
 | `LLM_PROVIDER` | `openrouter` |
 | `LLM_MODEL` | Exact model ID copied from OpenRouter, such as `publisher/model-id` |
 | `LLM_API_KEY` | Your OpenRouter API key; enter it directly in Railway |
+| `REASONING_EFFORT` | `medium` for the initial balanced setting |
 
 Apply the variable changes with **Deploy**. A model change needs no Draftbit
 release. Model IDs are text values; Railway does not provide a model catalog.
+
+## Reasoning effort
+
+In mobile mode, an explicitly supplied `REASONING_EFFORT` takes precedence over
+any saved effort, independently of provider/model overrides. Supported values
+are `minimal`, `low`, `medium` and `high`. Use a blank value to select **Auto**
+(omit the effort parameter and let the model/provider use its default).
+Removing the variable restores the saved effort if one exists. Non-mobile
+installations retain saved-configuration priority, so the reference web app
+can still be configured from its Settings page.
+
+Edit this value in Railway Variables and deploy to change the level. The
+application forwards the selected effort on supported requests; actual
+reasoning behavior depends on the model, provider and available output budget.
+Higher effort can increase latency and billed tokens and does not establish
+better CV quality by itself. Set the reference web app to **Medium** for the
+initial comparison with this deployment.
 
 ## Selection priority
 
