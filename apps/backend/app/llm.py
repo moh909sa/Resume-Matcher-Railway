@@ -873,7 +873,9 @@ def saved_endpoint_accepts_key(
 def get_llm_config() -> LLMConfig:
     """Get current LLM configuration.
 
-    Priority for api_key: top-level api_key > api_keys[provider] > env/settings
+    In mobile mode, explicit LLM_PROVIDER/LLM_MODEL settings override config.json.
+    Absent selection fields and non-mobile installs retain saved-config priority.
+    Mobile OpenRouter keys prefer LLM_API_KEY; other key rules use resolve_api_key.
     Priority for reasoning_effort: config.json > env/settings
 
     Runs a one-shot migration for existing gpt-5 users: if provider is openai,
@@ -887,11 +889,43 @@ def get_llm_config() -> LLMConfig:
     provider = stored.get("provider", settings.llm_provider)
     model = stored.get("model", settings.llm_model)
 
+    # Railway owns explicitly supplied selection fields in mobile deployments.
+    # Pydantic tracks env/.env/constructor inputs separately from class defaults:
+    # an absent LLM_PROVIDER must not replace a saved OpenRouter configuration
+    # with the Settings class's implicit OpenAI default.
+    supplied = (
+        getattr(settings, "model_fields_set", set())
+        if getattr(settings, "mobile_api_enabled", False)
+        else set()
+    )
+    provider_override = "llm_provider" in supplied
+    model_override = "llm_model" in supplied and bool(settings.llm_model.strip())
+    if provider_override:
+        provider = settings.llm_provider
+    if model_override:
+        model = settings.llm_model.strip()
+
+    if provider != stored.get("provider", settings.llm_provider):
+        if not model_override:
+            raise ValueError("Changing LLM_PROVIDER requires an explicit LLM_MODEL")
+        # These values belong to the previously saved provider. Preserve the
+        # per-provider key map, but never carry its shared key/custom endpoint
+        # or model-specific options into the newly selected provider.
+        stored = {
+            key: value
+            for key, value in stored.items()
+            if key not in {
+                "api_key", "api_base", API_BASE_KEY_BINDING,
+                "api_version", "reasoning_effort",
+            }
+        }
+
     # One-shot migration: preserve old gpt-5 reasoning_effort behavior for
     # existing configs. Gated on ABSENT key so users can opt out by clearing
     # the field (PUT handler persists an empty string on clear).
     if (
-        provider == "openai"
+        not (provider_override or model_override)
+        and provider == "openai"
         and "gpt-5" in model.lower()
         and "reasoning_effort" not in stored
     ):
