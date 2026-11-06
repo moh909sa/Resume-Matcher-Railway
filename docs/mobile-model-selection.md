@@ -13,15 +13,17 @@ release. Model IDs are text values; Railway does not provide a model catalog.
 
 ## Selection priority
 
-With `MOBILE_API_ENABLED=true`, explicitly supplied `LLM_PROVIDER` and nonblank
-`LLM_MODEL` settings override the saved `config.json` selection. Implicit
-Settings defaults never replace a saved selection. When omitted, the existing
+With `MOBILE_API_ENABLED=true`, a nonblank `LLM_MODEL` overrides the saved model.
+An explicitly supplied `LLM_PROVIDER` overrides the saved provider only together
+with a nonblank `LLM_MODEL`. This also prevents the Docker startup script's
+injected `LLM_PROVIDER=openai` default from replacing a saved selection.
+Implicit Settings defaults never replace a saved selection. When omitted, the existing
 saved configuration remains in effect. Non-mobile installations retain their
 existing settings behavior.
 
 Change both provider and model together when switching providers. A provider
-switch without an explicit model is rejected rather than using a model from
-the previous provider. Provider-specific saved endpoints, shared keys and
+variable without an explicit model leaves the saved selection in effect.
+Provider-specific saved endpoints, shared keys and
 reasoning options are not reused across a provider switch; set the credentials
 and any required endpoint for the new provider separately. Local providers
 continue to reject the generic cloud-key fallback.

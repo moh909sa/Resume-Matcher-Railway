@@ -99,6 +99,7 @@ async def test_unowned_cv_rejected_before_any_ai_call():
         (True, {"llm_model": ""}, ("openrouter", "saved/model")),
         (True, {"llm_model": "   "}, ("openrouter", "saved/model")),
         (True, {"llm_provider": "openrouter"}, ("openrouter", "saved/model")),
+        (True, {"llm_provider": "openai"}, ("openrouter", "saved/model")),
         (
             True,
             {"llm_provider": "openrouter", "llm_model": "publisher/replacement"},
@@ -199,7 +200,7 @@ def test_mobile_provider_switch_does_not_reuse_previous_credentials_or_endpoint(
     assert saved["api_key"] == "old-local-key"
 
 
-def test_mobile_provider_switch_requires_explicit_model(
+def test_mobile_provider_without_model_preserves_saved_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app import llm
@@ -218,8 +219,8 @@ def test_mobile_provider_switch_requires_explicit_model(
             "model": "old-provider-model",
         },
     )
-    with pytest.raises(ValueError, match="requires an explicit LLM_MODEL"):
-        llm.get_llm_config()
+    config = llm.get_llm_config()
+    assert (config.provider, config.model) == ("anthropic", "old-provider-model")
 
 
 @pytest.mark.parametrize("provider", ["ollama", "openai_compatible"])

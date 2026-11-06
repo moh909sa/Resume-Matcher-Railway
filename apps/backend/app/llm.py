@@ -873,7 +873,8 @@ def saved_endpoint_accepts_key(
 def get_llm_config() -> LLMConfig:
     """Get current LLM configuration.
 
-    In mobile mode, explicit LLM_PROVIDER/LLM_MODEL settings override config.json.
+    In mobile mode, explicit LLM_MODEL overrides config.json. An explicit
+    LLM_PROVIDER overrides it only alongside a nonblank LLM_MODEL.
     Absent selection fields and non-mobile installs retain saved-config priority.
     Mobile OpenRouter keys prefer LLM_API_KEY; other key rules use resolve_api_key.
     Priority for reasoning_effort: config.json > env/settings
@@ -898,16 +899,17 @@ def get_llm_config() -> LLMConfig:
         if getattr(settings, "mobile_api_enabled", False)
         else set()
     )
-    provider_override = "llm_provider" in supplied
     model_override = "llm_model" in supplied and bool(settings.llm_model.strip())
+    # docker/start.sh exports LLM_PROVIDER=openai even when the operator did
+    # not choose a provider. Require a model alongside it so this startup
+    # default never replaces a saved selection on deployment.
+    provider_override = "llm_provider" in supplied and model_override
     if provider_override:
         provider = settings.llm_provider
     if model_override:
         model = settings.llm_model.strip()
 
     if provider != stored.get("provider", settings.llm_provider):
-        if not model_override:
-            raise ValueError("Changing LLM_PROVIDER requires an explicit LLM_MODEL")
         # These values belong to the previously saved provider. Preserve the
         # per-provider key map, but never carry its shared key/custom endpoint
         # or model-specific options into the newly selected provider.
