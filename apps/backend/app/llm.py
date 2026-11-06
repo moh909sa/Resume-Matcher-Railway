@@ -397,6 +397,15 @@ def _reasoning_effort_kwarg(
     """
     if not reasoning_effort:
         return {}
+    if (
+        config.provider == "openrouter"
+        and config.model.removeprefix("openrouter/").startswith("anthropic/")
+        and max_tokens <= 1024
+    ):
+        # OpenRouter's Claude reasoning budget has a 1024-token minimum.
+        # Leave room for a visible answer on short probes and completions.
+        logging.info("Omitting OpenRouter Claude reasoning for a short output budget")
+        return {}
     if config.provider == "anthropic" and max_tokens <= (
         _ANTHROPIC_THINKING_BUDGETS.get(reasoning_effort, 0)
     ):
@@ -422,6 +431,20 @@ def _apply_reasoning_effort(
     so a request that carries the effort there goes out without ``temperature``.
     """
     effort_kwarg = _reasoning_effort_kwarg(config, reasoning_effort, max_tokens)
+    if effort_kwarg and config.provider == "openrouter":
+        # Send OpenRouter's documented unified parameter explicitly. Pinned
+        # LiteLLM otherwise emits legacy top-level reasoning_effort, which
+        # does not reliably enable reasoning for routed Claude models.
+        extra_body = dict(kwargs.get("extra_body") or {})
+        reasoning = dict(extra_body.get("reasoning") or {})
+        reasoning.pop("max_tokens", None)  # effort and token budget are exclusive
+        reasoning["effort"] = effort_kwarg["reasoning_effort"]
+        extra_body["reasoning"] = reasoning
+        kwargs["extra_body"] = extra_body
+        kwargs.pop("reasoning_effort", None)
+        if config.model.removeprefix("openrouter/").startswith("anthropic/"):
+            kwargs.pop("temperature", None)
+        return
     kwargs.update(effort_kwarg)
     if effort_kwarg and config.provider == "anthropic":
         kwargs.pop("temperature", None)
@@ -877,7 +900,8 @@ def get_llm_config() -> LLMConfig:
     LLM_PROVIDER overrides it only alongside a nonblank LLM_MODEL.
     Absent selection fields and non-mobile installs retain saved-config priority.
     Mobile OpenRouter keys prefer LLM_API_KEY; other key rules use resolve_api_key.
-    Priority for reasoning_effort: config.json > env/settings
+    Explicit REASONING_EFFORT also wins in mobile mode; a blank value selects
+    the provider default. Otherwise config.json retains priority over settings.
 
     Runs a one-shot migration for existing gpt-5 users: if provider is openai,
     model contains 'gpt-5', and reasoning_effort is ABSENT from config.json
@@ -900,6 +924,7 @@ def get_llm_config() -> LLMConfig:
         else set()
     )
     model_override = "llm_model" in supplied and bool(settings.llm_model.strip())
+    effort_override = "reasoning_effort" in supplied
     # docker/start.sh exports LLM_PROVIDER=openai even when the operator did
     # not choose a provider. Require a model alongside it so this startup
     # default never replaces a saved selection on deployment.
@@ -930,7 +955,7 @@ def get_llm_config() -> LLMConfig:
     # existing configs. Gated on ABSENT key so users can opt out by clearing
     # the field (PUT handler persists an empty string on clear).
     if (
-        not (provider_override or model_override)
+        not (provider_override or model_override or effort_override)
         and provider == "openai"
         and "gpt-5" in model.lower()
         and "reasoning_effort" not in stored
@@ -957,7 +982,11 @@ def get_llm_config() -> LLMConfig:
         )
         api_key = ""
 
-    raw_re = stored.get("reasoning_effort", settings.reasoning_effort)
+    raw_re = (
+        settings.reasoning_effort
+        if effort_override
+        else stored.get("reasoning_effort", settings.reasoning_effort)
+    )
     # Normalize empty string to None — user explicitly cleared.
     reasoning_effort = raw_re if raw_re else None
 
