@@ -914,9 +914,13 @@ def get_llm_config() -> LLMConfig:
         stored = {
             key: value
             for key, value in stored.items()
-            if key not in {
-                "api_key", "api_base", API_BASE_KEY_BINDING,
-                "api_version", "reasoning_effort",
+            if key
+            not in {
+                "api_key",
+                "api_base",
+                API_BASE_KEY_BINDING,
+                "api_version",
+                "reasoning_effort",
             }
         }
 
