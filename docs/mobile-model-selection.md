@@ -29,6 +29,11 @@ Higher effort can increase latency and billed tokens and does not establish
 better CV quality by itself. Set the reference web app to **Medium** for the
 initial comparison with this deployment.
 
+OpenRouter requests use its unified `reasoning: {effort: ...}` body. Routed
+Claude requests omit conflicting temperature values; very short Claude output
+budgets omit explicit reasoning to leave space for the visible answer. This
+also keeps the 64-token connection probe working.
+
 ## Selection priority
 
 With `MOBILE_API_ENABLED=true`, a nonblank `LLM_MODEL` overrides the saved model.

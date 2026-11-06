@@ -397,6 +397,15 @@ def _reasoning_effort_kwarg(
     """
     if not reasoning_effort:
         return {}
+    if (
+        config.provider == "openrouter"
+        and config.model.removeprefix("openrouter/").startswith("anthropic/")
+        and max_tokens <= 1024
+    ):
+        # OpenRouter's Claude reasoning budget has a 1024-token minimum.
+        # Leave room for a visible answer on short probes and completions.
+        logging.info("Omitting OpenRouter Claude reasoning for a short output budget")
+        return {}
     if config.provider == "anthropic" and max_tokens <= (
         _ANTHROPIC_THINKING_BUDGETS.get(reasoning_effort, 0)
     ):
@@ -422,6 +431,20 @@ def _apply_reasoning_effort(
     so a request that carries the effort there goes out without ``temperature``.
     """
     effort_kwarg = _reasoning_effort_kwarg(config, reasoning_effort, max_tokens)
+    if effort_kwarg and config.provider == "openrouter":
+        # Send OpenRouter's documented unified parameter explicitly. Pinned
+        # LiteLLM otherwise emits legacy top-level reasoning_effort, which
+        # does not reliably enable reasoning for routed Claude models.
+        extra_body = dict(kwargs.get("extra_body") or {})
+        reasoning = dict(extra_body.get("reasoning") or {})
+        reasoning.pop("max_tokens", None)  # effort and token budget are exclusive
+        reasoning["effort"] = effort_kwarg["reasoning_effort"]
+        extra_body["reasoning"] = reasoning
+        kwargs["extra_body"] = extra_body
+        kwargs.pop("reasoning_effort", None)
+        if config.model.removeprefix("openrouter/").startswith("anthropic/"):
+            kwargs.pop("temperature", None)
+        return
     kwargs.update(effort_kwarg)
     if effort_kwarg and config.provider == "anthropic":
         kwargs.pop("temperature", None)
