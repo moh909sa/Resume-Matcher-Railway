@@ -873,7 +873,10 @@ def saved_endpoint_accepts_key(
 def get_llm_config() -> LLMConfig:
     """Get current LLM configuration.
 
-    Priority for api_key: top-level api_key > api_keys[provider] > env/settings
+    In mobile mode, explicit LLM_MODEL overrides config.json. An explicit
+    LLM_PROVIDER overrides it only alongside a nonblank LLM_MODEL.
+    Absent selection fields and non-mobile installs retain saved-config priority.
+    Mobile OpenRouter keys prefer LLM_API_KEY; other key rules use resolve_api_key.
     Priority for reasoning_effort: config.json > env/settings
 
     Runs a one-shot migration for existing gpt-5 users: if provider is openai,
@@ -887,11 +890,48 @@ def get_llm_config() -> LLMConfig:
     provider = stored.get("provider", settings.llm_provider)
     model = stored.get("model", settings.llm_model)
 
+    # Railway owns explicitly supplied selection fields in mobile deployments.
+    # Pydantic tracks env/.env/constructor inputs separately from class defaults:
+    # an absent LLM_PROVIDER must not replace a saved OpenRouter configuration
+    # with the Settings class's implicit OpenAI default.
+    supplied = (
+        getattr(settings, "model_fields_set", set())
+        if getattr(settings, "mobile_api_enabled", False)
+        else set()
+    )
+    model_override = "llm_model" in supplied and bool(settings.llm_model.strip())
+    # docker/start.sh exports LLM_PROVIDER=openai even when the operator did
+    # not choose a provider. Require a model alongside it so this startup
+    # default never replaces a saved selection on deployment.
+    provider_override = "llm_provider" in supplied and model_override
+    if provider_override:
+        provider = settings.llm_provider
+    if model_override:
+        model = settings.llm_model.strip()
+
+    if provider != stored.get("provider", settings.llm_provider):
+        # These values belong to the previously saved provider. Preserve the
+        # per-provider key map, but never carry its shared key/custom endpoint
+        # or model-specific options into the newly selected provider.
+        stored = {
+            key: value
+            for key, value in stored.items()
+            if key
+            not in {
+                "api_key",
+                "api_base",
+                API_BASE_KEY_BINDING,
+                "api_version",
+                "reasoning_effort",
+            }
+        }
+
     # One-shot migration: preserve old gpt-5 reasoning_effort behavior for
     # existing configs. Gated on ABSENT key so users can opt out by clearing
     # the field (PUT handler persists an empty string on clear).
     if (
-        provider == "openai"
+        not (provider_override or model_override)
+        and provider == "openai"
         and "gpt-5" in model.lower()
         and "reasoning_effort" not in stored
     ):
