@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app.database import Database
 from app.models import MobileEditorRevision, Resume
 from app.resume_ownership import current_resume_owner
-from app.schemas.models import DEFAULT_SECTION_META, ResumeData
+from app.schemas.models import DEFAULT_SECTION_META, ResumeData, ResumeLayoutSettings
 from app.services.ats import compute_ats_score
 from app.services.refiner import _extract_all_text, _keyword_in_text, job_keyword_terms
 
@@ -259,6 +259,9 @@ class EditorStore:
                 "revision": row.revision,
                 "updated_at": row.created_at,
                 "resume": row.document,
+                "layout": row.layout
+                if row.layout is not None
+                else ResumeLayoutSettings().model_dump(mode="json"),
                 "confirmed_skills": row.confirmed_skills,
                 "analysis": row.analysis,
             }
@@ -304,14 +307,16 @@ class EditorStore:
         mutation_id: str,
         document: dict[str, Any],
         confirmed_skills: list[str],
+        layout: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        fingerprint = digest(
-            {
-                "expected_revision": expected_revision,
-                "resume": document,
-                "confirmed_skills": confirmed_skills,
-            }
-        )
+        mutation = {
+            "expected_revision": expected_revision,
+            "resume": document,
+            "confirmed_skills": confirmed_skills,
+        }
+        if layout is not None:
+            mutation["layout"] = layout
+        fingerprint = digest(mutation)
         async with self.db._write_session() as session:
             latest = await self._latest(session, resume_id)
             receipt = await session.scalar(
@@ -346,6 +351,7 @@ class EditorStore:
                 owner_id=current_resume_owner(),
                 revision=latest.revision + 1,
                 document=copy.deepcopy(document),
+                layout=copy.deepcopy(layout if layout is not None else latest.layout),
                 confirmed_skills=list(confirmed_skills),
                 mutation_id=mutation_id,
                 mutation_hash=fingerprint,
@@ -363,11 +369,6 @@ class EditorStore:
             session.add(row)
             await session.flush()
             result = self.public(row)
-            if latest.analysis:
-                result["analysis"] = {
-                    **copy.deepcopy(latest.analysis),
-                    "status": "stale",
-                }
             await session.commit()
             return result
 

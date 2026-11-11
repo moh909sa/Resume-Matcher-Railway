@@ -95,7 +95,6 @@ class Resume(Base):
 class MobileEditorRevision(Base):
     """Immutable owner-scoped editing snapshots and atomic mutation receipts.
 
-    Added by create_all, without altering existing documents or registry tables.
     The live Resume remains the canonical document for existing engine services.
     """
 
@@ -105,15 +104,14 @@ class MobileEditorRevision(Base):
     revision: Mapped[int] = mapped_column(Integer, primary_key=True)
     owner_id: Mapped[str] = mapped_column(String, index=True)
     document: Mapped[dict] = mapped_column(JSON)
+    layout: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     confirmed_skills: Mapped[list] = mapped_column(JSON, default=list)
     mutation_id: Mapped[str | None] = mapped_column(String, nullable=True)
     mutation_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     analysis: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String, default=_utcnow_iso)
 
-    __table_args__ = (
-        UniqueConstraint("owner_id", "resume_id", "mutation_id"),
-    )
+    __table_args__ = (UniqueConstraint("owner_id", "resume_id", "mutation_id"),)
 
 
 class Job(Base):
