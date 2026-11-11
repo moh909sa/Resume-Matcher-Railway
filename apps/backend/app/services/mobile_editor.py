@@ -61,15 +61,42 @@ def print_document(document: dict[str, Any]) -> dict[str, Any]:
     normalized document is used for scoring, PDF rendering and round-trip checks.
     """
     data = copy.deepcopy(document)
-    metadata = data.get("sectionMeta") or []
-    metadata = copy.deepcopy(metadata)
+    custom_sections = data.get("customSections") or {}
+    saved_metadata = data.get("sectionMeta") or []
+    aliases = {
+        f"customSections.{key}": key
+        for key, section in custom_sections.items()
+        if isinstance(section, dict) and key not in ResumeData.model_fields
+    }
+    # The mobile editor prefers prefixed metadata when both forms exist.
+    legacy_metadata = {}
+    for meta in saved_metadata:
+        if (key := aliases.get(meta.get("key"))) is not None:
+            legacy_metadata.setdefault(key, meta)
+
+    metadata = []
+    for meta in saved_metadata:
+        saved_key = meta.get("key")
+        if (key := aliases.get(saved_key)) is not None:
+            if legacy_metadata[key] is meta:
+                metadata.append(
+                    {
+                        **meta,
+                        "key": key,
+                        "isDefault": False,
+                        "isVisible": meta.get("isVisible", True),
+                    }
+                )
+        elif saved_key not in legacy_metadata:
+            metadata.append(meta)
+
     known = {meta.get("key") for meta in metadata}
     next_order = max((meta.get("order", 0) for meta in metadata), default=-1) + 1
     for default in DEFAULT_SECTION_META:
         if default["key"] not in known:
             metadata.append({**copy.deepcopy(default), "order": next_order})
             next_order += 1
-    for key, section in (data.get("customSections") or {}).items():
+    for key, section in custom_sections.items():
         if key not in known and isinstance(section, dict):
             metadata.append(
                 {
