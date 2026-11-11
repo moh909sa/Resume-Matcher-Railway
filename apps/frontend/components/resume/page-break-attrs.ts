@@ -9,13 +9,12 @@
  */
 
 /** An entry with at least this many bullets may split between bullets. */
-export const SPLIT_ENTRY_MIN_BULLETS = 4;
+export const SPLIT_ENTRY_MIN_BULLETS = 2;
 
 /**
  * One entry (a job, project, degree, skill row or citation). It stays whole on one
- * page, unless it has SPLIT_ENTRY_MIN_BULLETS or more bullets: then it may split
- * between bullets, keeping its header with the first two bullets and the last two
- * bullets together.
+ * page, unless it has multiple bullets: then it may split between bullets,
+ * keeping its header with the first bullet.
  */
 export function resumeItem(bullets?: readonly unknown[] | null): { 'data-resume-item': string } {
   return {

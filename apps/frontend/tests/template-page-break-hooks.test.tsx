@@ -27,7 +27,13 @@ const data: ResumeData = {
       years: '2020 - 2023',
       description: ['Long one.', 'Two.', 'Three.', 'Four.'],
     },
-    { id: 2, title: 'Engineer', company: 'Lumen', years: '2017 - 2020', description: ['Short.'] },
+    {
+      id: 2,
+      title: 'Engineer',
+      company: 'Lumen',
+      years: '2017 - 2020',
+      description: ['Short.', 'Still splittable.'],
+    },
   ],
   education: [{ id: 1, institution: 'Uni Berlin', degree: 'BSc Physics', years: '2012 - 2016' }],
   personalProjects: [{ id: 1, name: 'promptdiff', description: ['A prompt test runner.'] }],
@@ -62,18 +68,18 @@ describe.each(TEMPLATE_OPTIONS.map((option) => option.id))(
       }
     });
 
-    it('marks entries, and lets only the four-bullet one split', () => {
+    it('marks entries with multiple bullets as splittable', () => {
       const { container } = render(<Resume resumeData={data} template={template} />);
       const entry = (text: string) =>
         Array.from(container.querySelectorAll('[data-resume-item]')).find((el) =>
           el.textContent?.includes(text)
         );
       expect(entry('Fernway')).toHaveAttribute('data-resume-item', 'split');
-      expect(entry('Lumen')).toHaveAttribute('data-resume-item', '');
+      expect(entry('Lumen')).toHaveAttribute('data-resume-item', 'split');
       expect(entry('Uni Berlin')).toHaveAttribute('data-resume-item', '');
       expect(entry('promptdiff')).toHaveAttribute('data-resume-item', '');
       expect(entry('Code Club')).toHaveAttribute('data-resume-item', '');
-      expect(container.querySelectorAll('[data-resume-item="split"]')).toHaveLength(1);
+      expect(container.querySelectorAll('[data-resume-item="split"]')).toHaveLength(2);
     });
   }
 );

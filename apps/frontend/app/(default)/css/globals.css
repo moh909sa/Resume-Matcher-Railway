@@ -164,30 +164,23 @@
   break-inside: avoid;
 }
 
-/* A long entry may split, but only between bullets: its header rows stay with
-   the first two bullets, and the last two bullets stay together. */
+/* Keep the entry header with its first bullet and allow breaks between bullets. */
 [data-resume-item='split'] {
   break-inside: auto;
 }
 
-[data-resume-item='split'] :not(ul, ol, li) {
+/* Match only header rows before the list. A descendant selector also matches
+   the flex items inside each bullet, which can propagate the avoidance to the
+   entire list and move the entry to the next page. */
+[data-resume-item='split'] > :not(ul, ol):has(~ :is(ul, ol)) {
   break-after: avoid;
 }
 
-[data-resume-item='split'] :is(ul, ol) {
+[data-resume-item='split'] > :is(ul, ol) {
   break-before: avoid;
 }
 
-[data-resume-item='split'] li:first-child {
-  break-after: avoid;
-}
-
-[data-resume-item='split'] li:last-child {
-  break-before: avoid;
-}
-
-/* A heading is never the last thing on a page: it stays with the first entry, or
-   with the first two lines of text, that follows it. */
+/* A heading stays with the beginning of the entry or text that follows it. */
 [data-resume-section-title] {
   break-after: avoid;
 }

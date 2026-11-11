@@ -23,10 +23,8 @@ describe('computePageStarts', () => {
   });
 
   it('splits a long entry between bullets instead of moving it whole', () => {
-    // Header + bullets 1-2 end at 700; bullets at 700/760/820/880/940/1000-1060; last two from 1000.
     const zones = [
-      { top: 600, bottom: 760 },
-      { top: 1000, bottom: 1120 },
+      { top: 600, bottom: 700 },
       { top: 640, bottom: 700 },
       { top: 700, bottom: 760 },
       { top: 760, bottom: 820 },
@@ -37,8 +35,7 @@ describe('computePageStarts', () => {
       { top: 1060, bottom: 1120 },
     ];
     expect(computePageStarts(1500, 1000, zones)).toEqual([0, 1000]);
-    // Page height 1030 lands inside the last two bullets: they move together.
-    expect(computePageStarts(1500, 1030, zones)).toEqual([0, 1000]);
+    expect(computePageStarts(1500, 1090, zones)).toEqual([0, 1060]);
   });
 
   it('breaks a paragraph between lines and keeps two lines on each side', () => {
@@ -96,7 +93,21 @@ describe('collectKeepZones', () => {
     ]);
   });
 
-  it('lets a split entry break between bullets only', () => {
+  it('lets an entry with two bullets use remaining space without orphaning its title', () => {
+    const container = layout(`
+      <div data-resume-section data-y="300,1100">
+        <h3 data-resume-section-title data-y="300,330">Experience</h3>
+        <div data-resume-item="split" data-y="330,1100">
+          <div data-y="330,370">Role</div>
+          <ul><li data-y="370,650">1</li><li data-y="650,1100">2</li></ul>
+        </div>
+      </div>`);
+    const zones = collectKeepZones(container);
+    expect(computePageStarts(1100, 1000, zones)).toEqual([0, 650]);
+    expect(computePageStarts(1100, 600, zones)).toEqual([0, 300, 650]);
+  });
+
+  it('keeps the title with the first bullet and lets the final bullet break independently', () => {
     const container = layout(`
       <div data-resume-section data-y="0,300">
         <h3 data-resume-section-title data-y="0,20">Experience</h3>
@@ -109,10 +120,10 @@ describe('collectKeepZones', () => {
         </div>
       </div>`);
     const zones = collectKeepZones(container);
-    expect(zones).toContainEqual({ top: 24, bottom: 140 }); // header + bullets 1-2
-    expect(zones).toContainEqual({ top: 220, bottom: 300 }); // bullets 5-6
+    expect(zones).toContainEqual({ top: 24, bottom: 100 }); // header + first bullet
+    expect(zones).not.toContainEqual({ top: 220, bottom: 300 }); // no pair of final bullets
     expect(zones).toContainEqual({ top: 140, bottom: 180 }); // bullet 3 whole
-    expect(zones).toContainEqual({ top: 0, bottom: 140 }); // heading + header + bullets 1-2
+    expect(zones).toContainEqual({ top: 0, bottom: 100 }); // heading + header + first bullet
     expect(zones).not.toContainEqual({ top: 24, bottom: 300 });
   });
 

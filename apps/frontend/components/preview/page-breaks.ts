@@ -93,10 +93,10 @@ export function collectKeepZones(container: HTMLElement): KeepZone[] {
   container.querySelectorAll('[data-resume-item], [data-no-break]').forEach((item) => {
     const whole = box(item);
     const bullets = Array.from(item.querySelectorAll('li'));
-    if (item.getAttribute('data-resume-item') === 'split' && bullets.length >= 4) {
-      // Header with the first two bullets, each bullet whole, the last two together.
-      const lead = { top: whole.top, bottom: box(bullets[1]).bottom };
-      zones.push(lead, { top: box(bullets[bullets.length - 2]).top, bottom: whole.bottom });
+    const firstBullet = bullets[0];
+    if (item.getAttribute('data-resume-item') === 'split' && firstBullet) {
+      const lead = { top: whole.top, bottom: box(firstBullet).bottom };
+      zones.push(lead);
       bullets.forEach((bullet) => zones.push(box(bullet)));
       leadZones.set(item, lead);
       return;
