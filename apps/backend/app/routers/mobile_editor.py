@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 from urllib.parse import urlencode
 from uuid import UUID
 
@@ -15,7 +15,12 @@ from app.mobile_access import current_user, supabase_backend
 from app.pdf import PRINT_ERROR_SELECTOR, PDFRenderError, render_resume_pdf
 from app.resume_ownership import resume_owner
 from app.routers.mobile_tailoring import _owned_tailoring
-from app.schemas.models import PageFitSettings, ResumeData
+from app.schemas.models import (
+    PageFitSettings,
+    ResumeData,
+    ResumeLayoutSettings,
+    ResumeTemplate,
+)
 from app.services.ats_parse import parse_check_pdf
 from app.services.mobile_editor import (
     MAX_DOCUMENT_BYTES,
@@ -34,6 +39,7 @@ class SaveEditorRequest(BaseModel):
     mutation_id: UUID
     resume: dict[str, Any]
     confirmed_skills: list[str] = Field(default_factory=list, max_length=500)
+    layout: ResumeLayoutSettings | None = None
 
     @field_validator("resume")
     @classmethod
@@ -58,7 +64,7 @@ class RevisionRequest(BaseModel):
 
 
 class ParseRequest(RevisionRequest):
-    page_size: Literal["A4", "LETTER"] = "A4"
+    page_size: Literal["A4", "LETTER"] | None = None
 
 
 async def _record(
@@ -93,6 +99,10 @@ async def _document(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "tailoring_id": record["id"],
         **result,
+        "layout_options": {
+            "templates": list(get_args(ResumeTemplate)),
+            "page_sizes": ["A4", "LETTER"],
+        },
         "job": {
             "title": record.get("job_title"),
             "company": record.get("company"),
@@ -129,6 +139,7 @@ async def save_editor(
             str(body.mutation_id),
             body.resume,
             body.confirmed_skills,
+            body.layout.model_dump(mode="json") if body.layout is not None else None,
         )
         document = await _document(record)
         # An idempotent replay must acknowledge exactly its own mutation even if
@@ -183,17 +194,18 @@ async def update_job_match(
 
 
 async def _render_snapshot(
-    record: dict[str, Any], revision: int, page_size: Literal["A4", "LETTER"]
+    record: dict[str, Any], revision: int, page_size: Literal["A4", "LETTER"] | None
 ) -> tuple[bytes, dict[str, Any], PageFitSettings]:
     snapshot = await EditorStore(db).read(record["engine_resume_id"], revision)
     snapshot["resume"] = print_document(snapshot["resume"])
     try:
         ResumeData.model_validate(snapshot["resume"])
+        layout = ResumeLayoutSettings.model_validate(snapshot["layout"])
     except ValidationError as error:
         raise HTTPException(
             409, "CV content needs correction before exporting"
         ) from error
-    fit = PageFitSettings(template="swiss-single", pageSize=page_size, cv_mode=True)
+    fit = PageFitSettings.for_mobile_layout(layout, page_size)
     token = render_drafts.put(snapshot["resume"])
     try:
         url = f"{settings.frontend_base_url}/print/resumes/draft?draft={token}&{urlencode(fit.to_query())}"
@@ -216,7 +228,7 @@ async def _render_snapshot(
 async def export_pdf(
     tailoring_id: UUID,
     revision: int = Query(..., ge=1),
-    page_size: Literal["A4", "LETTER"] = "A4",
+    page_size: Literal["A4", "LETTER"] | None = None,
     user_id: str = Depends(current_user),
     backend: SupabaseBackend = Depends(supabase_backend),
 ) -> Response:
@@ -230,7 +242,7 @@ async def export_pdf(
             "Content-Disposition": f'attachment; filename="tailored_cv_{tailoring_id}_v{revision}.pdf"',
             "Cache-Control": "private, no-store",
             "X-Resume-Revision": str(revision),
-        "X-PDF-Page-Count": str(count_pdf_pages(content)),
+            "X-PDF-Page-Count": str(count_pdf_pages(content)),
         },
     )
 

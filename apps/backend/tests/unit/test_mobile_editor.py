@@ -2,6 +2,7 @@
 
 import copy
 import hashlib
+import sqlite3
 from uuid import uuid4
 
 import pytest
@@ -94,6 +95,38 @@ async def test_committed_receipts_and_content_survive_reopen(editing):
                 await EditorStore(reopened).save(resume_id, 1, mutation, document, [])
                 == saved
             )
+    finally:
+        await reopened.close()
+
+
+async def test_layout_migrates_existing_editor_revisions_and_survives_reopen(
+    editing,
+) -> None:
+    database, owner, _, resume_id, document = editing
+    with resume_owner(owner):
+        original = await EditorStore(database).read(resume_id)
+    path = database.db_path
+    await database.close()
+    with sqlite3.connect(path) as old_db:
+        old_db.execute("ALTER TABLE mobile_editor_revisions DROP COLUMN layout")
+
+    reopened = Database(path)
+    try:
+        with resume_owner(owner):
+            store = EditorStore(reopened)
+            assert await store.read(resume_id, 1) == original
+            layout = {**original["layout"], "template": "clean", "pageSize": "LETTER"}
+            saved = await store.save(resume_id, 1, str(uuid4()), document, [], layout)
+            assert saved["layout"] == layout
+    finally:
+        await reopened.close()
+
+    reopened = Database(path)
+    try:
+        with resume_owner(owner):
+            store = EditorStore(reopened)
+            assert await store.read(resume_id) == saved
+            assert await store.read(resume_id, 1) == original
     finally:
         await reopened.close()
 

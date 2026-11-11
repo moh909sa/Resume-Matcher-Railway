@@ -606,11 +606,8 @@ class TemplateFontSize(BaseModel):
     bodyFont: Literal["serif", "sans-serif", "mono"] = "sans-serif"
 
 
-class TemplateSettings(BaseModel):
-    """A resume's saved formatting.
-
-    Mirrors TemplateSettings in apps/frontend/lib/types/template-settings.ts.
-    """
+class ResumeLayoutSettings(BaseModel):
+    """Formatting shared by the web builder and mobile editor."""
 
     template: ResumeTemplate = "swiss-single"
     pageSize: Literal["A4", "LETTER"] = "A4"
@@ -620,6 +617,11 @@ class TemplateSettings(BaseModel):
     compactMode: bool = False
     showContactIcons: bool = False
     accentColor: Literal["blue", "green", "orange", "red"] = "blue"
+
+
+class TemplateSettings(ResumeLayoutSettings):
+    """Saved formatting with web builder session metadata."""
+
     # Orders saves from one builder session (a tab): `revision` counts up per session.
     # A save older than the stored one from the same session is ignored, so that
     # tab's requests arriving out of order cannot undo its newer choice. Saves from
@@ -659,6 +661,32 @@ class PageFitSettings(BaseModel):
     # but never trim to a limit or raise an over-limit warning. Not a print setting,
     # so it is not sent to the print route.
     cv_mode: bool = False
+
+    @classmethod
+    def for_mobile_layout(
+        cls,
+        layout: ResumeLayoutSettings,
+        page_size: Literal["A4", "LETTER"] | None = None,
+    ) -> "PageFitSettings":
+        return cls(
+            template=layout.template,
+            pageSize=page_size or layout.pageSize,
+            marginTop=layout.margins.top,
+            marginBottom=layout.margins.bottom,
+            marginLeft=layout.margins.left,
+            marginRight=layout.margins.right,
+            sectionSpacing=layout.spacing.section,
+            itemSpacing=layout.spacing.item,
+            lineHeight=layout.spacing.lineHeight,
+            fontSize=layout.fontSize.base,
+            headerScale=layout.fontSize.headerScale,
+            headerFont=layout.fontSize.headerFont,
+            bodyFont=layout.fontSize.bodyFont,
+            compactMode=layout.compactMode,
+            showContactIcons=layout.showContactIcons,
+            accentColor=layout.accentColor,
+            cv_mode=True,
+        )
 
     def to_query(self) -> dict[str, str]:
         query: dict[str, str] = {}
