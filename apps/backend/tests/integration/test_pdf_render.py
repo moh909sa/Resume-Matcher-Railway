@@ -16,10 +16,14 @@ Real-render tests skip cleanly (never hard-fail) when no Chromium binary can
 be launched.
 """
 
+import io
 import socket
+from pathlib import Path
 from unittest.mock import AsyncMock
+from urllib.parse import quote
 
 import pytest
+from pdfminer.high_level import extract_text
 from playwright.async_api import Error as PlaywrightError
 
 from app.pdf import (
@@ -274,6 +278,96 @@ class TestRenderResumePdf:
         )
         assert pdf[:4] == b"%PDF"
         assert len(pdf) > 1000
+
+    @pytest.mark.parametrize(
+        ("page_size", "margin_mm", "font_px"), [("A4", 10, 16), ("LETTER", 15, 15)]
+    )
+    async def test_experience_uses_remaining_space_after_summary(
+        self, page_size: str, margin_mm: int, font_px: int
+    ) -> None:
+        """Nested spans inside flex bullets must not move Experience to page two."""
+        frontend = Path(__file__).resolve().parents[4] / "apps/frontend"
+        styles = frontend / "components/resume/styles"
+        print_css = "\n".join(
+            line
+            for path in (
+                frontend / "app/(default)/css/globals.css",
+                styles / "_tokens.css",
+                styles / "_base.module.css",
+                styles / "modern.module.css",
+            )
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if not line.startswith("@import")
+        )
+        markers = [
+            f"Role{role}Bullet{bullet}" for role in (1, 2) for bullet in range(1, 9)
+        ]
+        entries = []
+        for index, role in enumerate((1, 2)):
+            bullets = "".join(
+                f'<li class="flex"><span aria-hidden="true">•&nbsp;</span>'
+                f"<span><strong>{marker}</strong> Maintained enterprise network services "
+                "and documented troubleshooting steps for internal support teams. "
+                "Verified production readiness before handover.</span></li>"
+                for marker in markers[index * 8 : (index + 1) * 8]
+            )
+            entries.append(
+                f'<div class="resume-item" data-resume-item="split">'
+                f'<div class="flex resume-row-tight"><h4>Systems Engineer {role}</h4></div>'
+                '<div class="flex resume-row">Example Infrastructure Group</div>'
+                f'<ul class="resume-list resume-text-sm">{bullets}</ul></div>'
+            )
+
+        summary = (
+            "Network infrastructure engineer with experience supporting enterprise "
+            "services, coordinating upgrades, and writing documentation. "
+        ) * 6
+        html = f"""
+        <!doctype html><meta charset="utf-8">
+        <style>
+        * {{ box-sizing: border-box; }}
+        body, h1, h3, h4, p, ul {{ margin: 0; padding: 0; }}
+        .flex {{ display: flex; }}
+        {print_css}
+        .resume-body {{
+          --font-size-base: {font_px}px; --body-font: Arial, sans-serif;
+          --margin-top: 0; --margin-right: 0; --margin-bottom: 0; --margin-left: 0;
+        }}
+        </style>
+        <main class="resume-print resume-body">
+          <header class="resume-header">
+            <h1 class="resume-name">Synthetic Candidate</h1>
+            <p>Infrastructure Engineer</p>
+          </header>
+          <section class="resume-section" data-resume-section>
+            <h3 class="section-title-accent" data-resume-section-title>Summary</h3>
+            <p>{summary}</p>
+          </section>
+          <section class="resume-section" data-resume-section>
+            <h3 class="section-title-accent" data-resume-section-title>Experience</h3>
+            <div class="resume-items">{"".join(entries)}</div>
+          </section>
+          <section class="resume-section" data-resume-section>
+            <h3 class="section-title-accent" data-resume-section-title>Education</h3>
+            <p>EndResumeMarker: Bachelor of Engineering</p>
+          </section>
+        </main>
+        """
+        pdf = await _render_or_skip(
+            "data:text/html;charset=utf-8," + quote(html),
+            page_size=page_size,
+            margins=dict.fromkeys(("top", "right", "bottom", "left"), margin_mm),
+        )
+        text = extract_text(io.BytesIO(pdf))
+        pages = text.split("\f")[:-1]
+        assert "EXPERIENCE" in pages[0]
+        assert markers[0] in pages[0] and markers[-1] in pages[-1]
+        assert len(pages) == 2
+        assert all(text.count(marker) == 1 for marker in markers)
+        assert [text.index(marker) for marker in markers] == sorted(
+            text.index(marker) for marker in markers
+        )
+        assert "EndResumeMarker" in pages[-1]
 
 
 class TestRenderResumePdfErrors:
