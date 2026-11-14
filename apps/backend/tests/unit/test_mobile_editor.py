@@ -255,3 +255,49 @@ def test_partial_metadata_preserves_populated_sections_in_print_and_score():
     assert "Python" in result["matched_keywords"]
     assert "Rust" in result["matched_keywords"]
     assert "sectionMeta" not in document["customSections"]
+
+
+@pytest.mark.parametrize("visible", [True, False])
+@pytest.mark.parametrize("include_unprefixed_metadata", [True, False])
+def test_prefixed_custom_section_metadata_matches_editor_in_print_and_score(
+    visible: bool, include_unprefixed_metadata: bool
+) -> None:
+    legacy_metadata = {
+        "id": "legacy-research",
+        "key": "customSections.research",
+        "displayName": "Publications",
+        "sectionType": "text",
+        "isDefault": False,
+        "isVisible": visible,
+        "order": 2,
+    }
+    metadata = [legacy_metadata]
+    if include_unprefixed_metadata:
+        metadata.insert(
+            0,
+            {
+                **legacy_metadata,
+                "id": "research",
+                "key": "research",
+                "displayName": "Research",
+                "isVisible": not visible,
+                "order": 7,
+            },
+        )
+    document = {
+        "customSections": {"research": {"sectionType": "text", "text": "Rust"}},
+        "sectionMeta": metadata,
+    }
+    original = copy.deepcopy(document)
+
+    printed = print_document(document)
+    custom_meta = [
+        meta
+        for meta in printed["sectionMeta"]
+        if meta["key"] in {"research", "customSections.research"}
+    ]
+    assert custom_meta == [{**legacy_metadata, "key": "research"}]
+    assert print_document(printed) == printed
+    assert document == original
+    result = calculate_analysis(document, job_context(), 1)
+    assert ("Rust" in result["matched_keywords"]) is visible
