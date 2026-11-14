@@ -228,6 +228,70 @@ async def test_pdf_uses_frozen_revision_and_discards_private_token(
     assert fit.pageSize == "LETTER"
 
 
+@pytest.mark.parametrize("template", ["deedy", "swiss-two-column"])
+async def test_pdf_omits_blank_projects_without_changing_saved_data(
+    editing, monkeypatch, template: str
+) -> None:
+    from urllib.parse import parse_qs, urlparse
+
+    from app.routers import mobile_editor as routes
+    from app.services.page_fit import render_drafts
+
+    database, owner, _, resume_id, document = editing
+    monkeypatch.setattr(routes, "db", database)
+    blank = {
+        "id": 1,
+        "name": "  ",
+        "description": ["<em>&nbsp;</em><br>", "<strong>\u200b</strong>"],
+        "descriptionStyles": ["plain", "bullet"],
+    }
+    detailed = {"id": 2, "description": ["<em>Built a useful tool</em>"]}
+    linked = {"id": 3, "website": "https://example.com"}
+    rendered = []
+
+    async def render(url: str, page_size: str, **kwargs: object) -> bytes:
+        query = parse_qs(urlparse(url).query)
+        assert query["template"] == [template]
+        rendered.append(render_drafts.get(query["draft"][0]))
+        return b"%PDF-test"
+
+    monkeypatch.setattr(routes, "render_resume_pdf", render)
+    record = {"engine_resume_id": resume_id}
+    original_projects = [blank, detailed, linked]
+    with resume_owner(owner):
+        store = EditorStore(database)
+        await store.read(resume_id)
+        await store.save(
+            resume_id,
+            1,
+            str(uuid4()),
+            {
+                **document,
+                "personalProjects": [blank],
+            },
+            [],
+            {"template": template},
+        )
+        await store.save(
+            resume_id,
+            2,
+            str(uuid4()),
+            {
+                **document,
+                "personalProjects": original_projects,
+            },
+            [],
+            {"template": template},
+        )
+        await _render_snapshot(record, 2, None)
+        await _render_snapshot(record, 3, None)
+        assert (await store.read(resume_id, 3))["resume"][
+            "personalProjects"
+        ] == original_projects
+
+    assert [data["personalProjects"] for data in rendered] == [[], [detailed, linked]]
+
+
 def test_partial_metadata_preserves_populated_sections_in_print_and_score():
     document = {
         "summary": "Engineer",

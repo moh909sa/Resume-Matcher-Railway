@@ -13,7 +13,12 @@ from sqlalchemy import select
 from app.database import Database
 from app.models import MobileEditorRevision, Resume
 from app.resume_ownership import current_resume_owner
-from app.schemas.models import DEFAULT_SECTION_META, ResumeData, ResumeLayoutSettings
+from app.schemas.models import (
+    DEFAULT_SECTION_META,
+    Project,
+    ResumeData,
+    ResumeLayoutSettings,
+)
 from app.services.ats import compute_ats_score
 from app.services.refiner import _extract_all_text, _keyword_in_text, job_keyword_terms
 
@@ -52,6 +57,28 @@ class _Text(HTMLParser):
     def handle_data(self, data: str) -> None:
         if not self.hidden:
             self.parts.append(data)
+
+
+def project_has_printable_content(project: Project) -> bool:
+    """A saved placeholder row should never produce an empty Projects heading."""
+    if any(
+        value and value.strip()
+        for value in (
+            project.name,
+            project.role,
+            project.years,
+            project.github,
+            project.website,
+        )
+    ):
+        return True
+    for item in project.description:
+        parser = _Text()
+        parser.feed(item)
+        parser.close()
+        if "".join(parser.parts).replace("\u200b", "").replace("\ufeff", "").strip():
+            return True
+    return False
 
 
 def print_document(document: dict[str, Any]) -> dict[str, Any]:

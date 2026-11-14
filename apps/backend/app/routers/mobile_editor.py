@@ -27,6 +27,7 @@ from app.services.mobile_editor import (
     SCORING_VERSION,
     EditorStore,
     print_document,
+    project_has_printable_content,
 )
 from app.services.page_fit import count_pdf_pages, print_margins, render_drafts
 from app.services.supabase_backend import SupabaseBackend
@@ -197,16 +198,24 @@ async def _render_snapshot(
     record: dict[str, Any], revision: int, page_size: Literal["A4", "LETTER"] | None
 ) -> tuple[bytes, dict[str, Any], PageFitSettings]:
     snapshot = await EditorStore(db).read(record["engine_resume_id"], revision)
-    snapshot["resume"] = print_document(snapshot["resume"])
+    document = print_document(snapshot["resume"])
     try:
-        ResumeData.model_validate(snapshot["resume"])
+        resume = ResumeData.model_validate(document)
         layout = ResumeLayoutSettings.model_validate(snapshot["layout"])
     except ValidationError as error:
         raise HTTPException(
             409, "CV content needs correction before exporting"
         ) from error
+    if "personalProjects" in document:
+        document["personalProjects"] = [
+            raw
+            for raw, project in zip(
+                document["personalProjects"], resume.personalProjects, strict=True
+            )
+            if project_has_printable_content(project)
+        ]
     fit = PageFitSettings.for_mobile_layout(layout, page_size)
-    token = render_drafts.put(snapshot["resume"])
+    token = render_drafts.put(document)
     try:
         url = f"{settings.frontend_base_url}/print/resumes/draft?draft={token}&{urlencode(fit.to_query())}"
         content = await render_resume_pdf(
@@ -215,7 +224,7 @@ async def _render_snapshot(
             selector=f".resume-print, {PRINT_ERROR_SELECTOR}",
             margins=print_margins(fit),
         )
-        return content, snapshot["resume"], fit
+        return content, document, fit
     except PDFRenderError as error:
         raise HTTPException(
             503, "PDF generation is temporarily unavailable. Please try again."
