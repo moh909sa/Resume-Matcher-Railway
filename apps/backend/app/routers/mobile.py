@@ -18,6 +18,7 @@ from app.ai_budget import AIOperationRoute
 from app.config import settings
 from app.database import db
 from app.mobile_access import current_user, supabase_backend
+from app.mobile_consent import ConsentDecision, ConsentView, ai_processing_user, read_consent, save_consent
 from app.resume_ownership import resume_owner
 from app.routers.resumes import (
     DOCUMENT_TYPES_BY_EXTENSION,
@@ -122,11 +123,32 @@ async def me(user_id: str = Depends(current_user)) -> dict[str, str]:
     return {"id": user_id}
 
 
+@router.get("/ai-consent", response_model=ConsentView)
+async def get_mobile_ai_consent(
+    response: Response,
+    user_id: str = Depends(current_user),
+    backend: SupabaseBackend = Depends(supabase_backend),
+) -> ConsentView:
+    response.headers["Cache-Control"] = "private, no-store"
+    return await read_consent(backend, user_id)
+
+
+@router.put("/ai-consent", response_model=ConsentView)
+async def put_mobile_ai_consent(
+    decision: ConsentDecision,
+    response: Response,
+    user_id: str = Depends(current_user),
+    backend: SupabaseBackend = Depends(supabase_backend),
+) -> ConsentView:
+    response.headers["Cache-Control"] = "private, no-store"
+    return await save_consent(backend, user_id, decision)
+
+
 @router.post("/resumes/upload", response_model=MobileResume, status_code=201)
 async def upload_mobile_resume(
     request: Request,
     file: UploadFile = File(...),
-    user_id: str = Depends(current_user),
+    user_id: str = Depends(ai_processing_user),
     backend: SupabaseBackend = Depends(supabase_backend),
 ) -> MobileResume:
     """Retain the validated original, then reuse the existing parse/CAS pipeline."""
@@ -200,7 +222,7 @@ async def get_mobile_resume(
 async def retry_mobile_resume(
     request: Request,
     resume_id: UUID,
-    user_id: str = Depends(current_user),
+    user_id: str = Depends(ai_processing_user),
     backend: SupabaseBackend = Depends(supabase_backend),
 ) -> MobileResume:
     record = await _record(backend, user_id, str(resume_id))
