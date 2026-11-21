@@ -487,6 +487,11 @@ async def _route_acompletion(config: LLMConfig, transport: Any, **kwargs: Any) -
             "The API key is not confirmed for the saved Base URL. "
             "Re-enter the key in Settings."
         )
+    from app.mobile_consent import consent_routing
+
+    routing = await consent_routing(config)
+    if routing is not None:
+        kwargs["extra_body"] = {**kwargs.get("extra_body", {}), "provider": routing}
     if config.provider == "claude_cli":
         return await claude_acompletion(cli_model=config.model, **kwargs)
     if config.provider == "chatgpt":
@@ -504,6 +509,7 @@ async def _route_acompletion(config: LLMConfig, transport: Any, **kwargs: Any) -
         )
         retry_kwargs = {k: v for k, v in kwargs.items() if k != "max_tokens"}
         retry_kwargs["max_completion_tokens"] = kwargs["max_tokens"]
+        await consent_routing(config)
         return await transport.acompletion(**retry_kwargs)
 
 

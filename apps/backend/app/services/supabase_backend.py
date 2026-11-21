@@ -79,6 +79,26 @@ class SupabaseBackend:
         except ValueError as error:
             raise SupabaseUnavailable("Invalid storage service response") from error
 
+    async def ai_consent(self, owner: str, version: str) -> bool | None:
+        response = await self._request("GET", "/rest/v1/mobile_ai_consent", params={
+            "user_id": f"eq.{owner}", "version": f"eq.{version}", "select": "accepted", "limit": "1",
+        })
+        rows = self._json(response)
+        if not isinstance(rows, list) or (rows and (
+            not isinstance(rows[0], dict) or type(rows[0].get("accepted")) is not bool
+        )):
+            raise SupabaseUnavailable("Invalid AI consent response")
+        return rows[0]["accepted"] if rows else None
+
+    async def save_ai_consent(self, owner: str, version: str, accepted: bool) -> None:
+        await self._request(
+            "POST", "/rest/v1/mobile_ai_consent",
+            params={"on_conflict": "user_id,version"},
+            headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+            json={"user_id": owner, "version": version, "accepted": accepted,
+                  "decided_at": datetime.now(timezone.utc).isoformat()},
+        )
+
     async def verify_user(self, access_token: str) -> str:
         """Use the configured project's Auth server, not unverified JWT claims."""
         try:
