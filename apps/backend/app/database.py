@@ -1598,6 +1598,19 @@ class Database:
         async with self._session() as session:
             return await session.get(MobileAccountDeletion, owner) is not None
 
+    async def pending_account_deletions(self) -> list[dict[str, str]]:
+        async with self._session() as session:
+            rows = (await session.scalars(select(MobileAccountDeletion).where(MobileAccountDeletion.complete.is_(False)).limit(20))).all()
+            return [{"user_id": row.owner_id, "receipt_hash": row.receipt_hash} for row in rows]
+
+    async def finish_account_deletion(self, owner: str) -> None:
+        async with self._write_session() as session:
+            session.info["account_deletion"] = True
+            row = await session.get(MobileAccountDeletion, owner)
+            if row is not None:
+                row.complete = True
+                await session.commit()
+
     async def erase_account_documents(self, owner: str) -> None:
         """Remove only this owner's engine documents and every linked artifact."""
         async with self._write_session() as session:

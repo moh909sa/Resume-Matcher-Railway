@@ -96,7 +96,14 @@ async def complete_deletion(
         raise HTTPException(404, "Deletion request not found")
     if record["status"] == "complete":
         return {"status": "complete"}
-    owner = str(UUID(record["user_id"]))
+    await finish_confirmed_deletion(str(UUID(record["user_id"])), digest, backend)
+    return {"status": "complete"}
+
+
+async def finish_confirmed_deletion(
+    owner: str, digest: str, backend: SupabaseBackend
+) -> None:
+    """Same idempotent cleanup for device retries and the durable server worker."""
     with resume_owner(owner):
         await db.mark_account_deleting(owner, digest)
         await stop_account_activity(owner)
@@ -105,4 +112,4 @@ async def complete_deletion(
     await backend.erase_account_records(owner)
     await backend.erase_auth_user(owner)
     await backend.finish_account_deletion(digest)
-    return {"status": "complete"}
+    await db.finish_account_deletion(owner)

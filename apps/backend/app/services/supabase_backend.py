@@ -108,6 +108,15 @@ class SupabaseBackend:
             raise SupabaseUnavailable("Invalid deletion receipt")
         return rows[0] if rows else None
 
+    async def pending_account_deletions(self) -> list[dict[str, str]]:
+        response = await self._request("GET", "/rest/v1/mobile_account_deletions", params={
+            "status": "eq.deleting", "select": "user_id,receipt_hash", "limit": "20",
+        })
+        rows = self._json(response)
+        if not isinstance(rows, list):
+            raise SupabaseUnavailable("Invalid deletion queue")
+        return rows
+
     async def erase_account_storage(self, owner: str) -> None:
         # List the namespace, not only registry rows: includes interrupted uploads.
         prefix = str(UUID(owner))

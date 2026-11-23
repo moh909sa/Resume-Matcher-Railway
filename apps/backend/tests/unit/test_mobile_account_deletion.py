@@ -123,3 +123,29 @@ async def test_deletion_cancels_only_the_owners_active_job():
     assert not second.done()
     second.cancel()
     await asyncio.gather(second, return_exceptions=True)
+
+
+async def test_server_finishes_confirmed_deletion_without_device_or_auth(
+    isolated_db, monkeypatch
+):
+    from app.services import mobile_deletions
+
+    monkeypatch.setattr(mobile_privacy, "db", isolated_db)
+    monkeypatch.setattr(mobile_deletions, "db", isolated_db)
+    with resume_owner(A):
+        await isolated_db.create_resume_atomic_master("Confirmed then device lost")
+        await isolated_db.mark_account_deleting(A, "a" * 64)
+    backend = AsyncMock()
+    backend.deletion_receipt.return_value = {"status": "deleting"}
+    backend.pending_account_deletions.return_value = [
+        {"user_id": A, "receipt_hash": "a" * 64}
+    ]
+    backend.erase_account_storage.side_effect = [SupabaseUnavailable("outage"), None]
+    await mobile_deletions.drain_confirmed_deletions(backend)
+    backend.erase_auth_user.assert_not_awaited()
+    await mobile_deletions.drain_confirmed_deletions(backend)
+    backend.erase_auth_user.assert_awaited_once_with(A)
+    assert await isolated_db.pending_account_deletions() == []
+    with resume_owner(A):
+        assert await isolated_db.list_resumes() == []
+        assert await isolated_db.account_deleting(A)

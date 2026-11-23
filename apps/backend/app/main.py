@@ -81,11 +81,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await queue_manager.start()
     from app.services.mobile_jobs import mobile_tailoring_worker
     mobile_tailoring_worker.start()
+    from app.services.mobile_deletions import mobile_deletion_worker
+    if settings.mobile_api_enabled:
+        mobile_deletion_worker.start()
     # PDF renderer uses lazy initialization - will initialize on first use
     # await init_pdf_renderer()
     yield
     # Shutdown - stop durable queue tasks before closing database connections.
     try:
+        await mobile_deletion_worker.stop()
         await mobile_tailoring_worker.stop()
     except Exception:
         logger.exception("Error stopping mobile tailoring worker")
@@ -175,6 +179,7 @@ app.add_middleware(HostGuardMiddleware, allowed_hosts=settings.effective_allowed
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(mobile_router, prefix="/api/v1")
 from app.mobile_privacy import router as mobile_privacy_router
+
 app.include_router(mobile_privacy_router, prefix="/api/v1")
 app.include_router(mobile_tailoring_router, prefix="/api/v1")
 app.include_router(mobile_editor_router, prefix="/api/v1")
