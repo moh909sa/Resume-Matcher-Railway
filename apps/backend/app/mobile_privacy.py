@@ -35,6 +35,7 @@ async def privacy_facts() -> dict:
         "disclosure_ready": False,
         "recipients": [],
         "retention": None,
+        "data_use": None,
         "support_email": os.getenv("PUBLIC_SUPPORT_EMAIL") or None,
         "operator": os.getenv("PUBLIC_OPERATOR_NAME") or None,
         "country": os.getenv("PUBLIC_OPERATOR_COUNTRY") or None,
@@ -47,6 +48,7 @@ async def privacy_facts() -> dict:
             disclosure_ready=True,
             recipients=notice.recipients,
             retention=notice.retention,
+            data_use=notice.data_use,
             version=version,
             downstream_routes=notice.openrouter_only,
         )
@@ -86,7 +88,7 @@ async def complete_deletion(
     body: DeletionRequest,
     backend: SupabaseBackend = Depends(supabase_backend),
 ) -> dict[str, str]:
-    # A 256-bit receipt authorizes only finishing the already-confirmed deletion.
+    # A high-entropy receipt authorizes only finishing the already-confirmed deletion.
     # It is sent in the body, never a URL/log; survives removal of Auth identity.
     digest = hashlib.sha256(body.receipt.encode()).hexdigest()
     record = await backend.deletion_receipt(digest)
