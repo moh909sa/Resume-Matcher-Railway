@@ -6,10 +6,11 @@ LLM hot path) built from these factories. Keeping construction here lets tests
 spin up fully isolated engines against a temp-file database or a scratch schema.
 """
 
+import logging
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Column, create_engine, event, inspect, select, text, update
+from sqlalchemy import Column, create_engine, event, func, inspect, select, text, update
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.schema import CreateColumn
@@ -207,6 +208,18 @@ def _migrate_artifact_owners(conn: Connection, schema: str | None = None) -> Non
         )
         conn.execute(
             update(model).where(model.owner_id.is_(None)).values(owner_id=owner)
+        )
+
+    # Counts only: identify legacy records whose owner cannot safely be inferred.
+    # Never erase or assign another account's historical documents by guessing.
+    for model in (Resume, Job, TailoringPreview, Improvement, Application, QueueItem):
+        count = conn.scalar(
+            select(func.count()).select_from(model).where(model.owner_id.is_(None))
+        )
+        logging.getLogger(__name__).warning(
+            "Privacy ownership audit: table=%s unassigned=%s",
+            model.__tablename__,
+            count,
         )
 
 
