@@ -242,8 +242,18 @@ async def export_pdf(
     backend: SupabaseBackend = Depends(supabase_backend),
 ) -> Response:
     record = await _record(backend, user_id, tailoring_id)
-    with resume_owner(user_id):
-        content, _, _ = await _render_snapshot(record, revision, page_size)
+    content = (
+        await backend.stored_pdf(user_id, str(tailoring_id), revision)
+        if page_size is None and db.url
+        else None
+    )
+    if content is None:
+        with resume_owner(user_id):
+            content, _, _ = await _render_snapshot(record, revision, page_size)
+        if page_size is None and db.url:
+            content = await backend.persist_pdf(
+                user_id, str(tailoring_id), revision, content, count_pdf_pages(content)
+            )
     return Response(
         content,
         media_type="application/pdf",

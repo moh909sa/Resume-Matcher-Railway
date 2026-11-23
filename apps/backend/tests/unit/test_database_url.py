@@ -212,6 +212,15 @@ async def test_copy_rows_copies_every_table_once(tmp_path: Path) -> None:
         )
         source.set_api_key_ciphertext("openai", "ciphertext")
         await source.create_queue_item("q1", resume["resume_id"], "Engineer")
+        # These additive mobile tables also belong in the migration fixture.
+        with source._sync_engine.begin() as connection:
+            connection.execute(Base.metadata.tables["mobile_editor_revisions"].insert(), {
+                "resume_id": resume["resume_id"], "revision": 1, "owner_id": "qa-owner",
+                "document": {"summary": "s"}, "confirmed_skills": [],
+            })
+            connection.execute(Base.metadata.tables["mobile_account_deletions"].insert(), {
+                "owner_id": "qa-deleted-owner", "receipt_hash": "qa-receipt", "complete": True,
+            })
 
         counts = copy_rows(source, target)
         assert counts == {table.name: 1 for table in Base.metadata.sorted_tables}

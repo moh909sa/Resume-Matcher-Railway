@@ -14,6 +14,10 @@ Job descriptions the user saves for you go in [`jobs/`](jobs/README.md). That fo
 
 The authenticated mobile CV editor uses the canonical owner-scoped engine Resume,
 with additive immutable snapshots and mutation receipts in `mobile_editor_revisions`.
+The mobile deployment persists these tables in Supabase PostgreSQL's private
+`resume_engine` schema; PostgreSQL mobile sessions must never use a local file.
+Owner-protected Supabase views serve independent reads and revision-bound PDFs
+live in private Storage. See [docs/durable-cv-storage.md](docs/durable-cv-storage.md).
 See [docs/mobile-editor.md](docs/mobile-editor.md) for revision-safe saves, job-match
 freshness and authenticated snapshot PDF export. Uploaded originals remain unchanged.
 

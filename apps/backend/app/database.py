@@ -212,6 +212,10 @@ class Database:
         """
         if self._mobile_session_factory is not None:
             return
+        # PostgreSQL is already durable; mobile sessions must not use SQLite.
+        if self.url:
+            self._mobile_session_factory = self._async_session_factory
+            return
         path = (
             self.db_path.with_name(f"{self.db_path.stem}.mobile.db")
             if self.db_path is not None
@@ -249,7 +253,7 @@ class Database:
         with _translate_write_errors():
             async with self._session() as session:
                 for statement in _write_lock_statements(
-                    self.url is not None and current_resume_owner() is None,
+                    self.url is not None,
                     self.lock_timeout_ms,
                 ):
                     await session.execute(statement)
@@ -1625,6 +1629,12 @@ class Database:
             await session.execute(delete(Job).where(Job.job_id.in_(jobs)))
             await session.execute(delete(Resume).where(Resume.owner_id == owner))
             await session.commit()
+        if self.url:
+            import asyncio
+
+            from app.scripts.retired_store import erase_retired_account
+
+            await asyncio.to_thread(erase_retired_account, settings.data_dir, owner)
 
     async def reset_database(self) -> None:
         """Reset by truncating user-document tables and clearing uploads.

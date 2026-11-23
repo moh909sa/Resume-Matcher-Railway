@@ -496,6 +496,8 @@ async def confirm_mobile_tailor(
         engine_id = output.get("resume_id")
         if not engine_id:
             raise HTTPException(status_code=503, detail="Tailored CV was not saved")
+        with resume_owner(user_id):
+            await EditorStore(db).read(str(UUID(engine_id)))
         await backend.finish_tailored_operation(user_id, str(tailoring_id), token, {
             "engine_resume_id": str(UUID(engine_id)), "status": "ready",
             "result_json": output,

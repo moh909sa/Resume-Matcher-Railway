@@ -127,7 +127,7 @@ def _init_postgres(engine: Engine, schema: str | None) -> None:
             text("SELECT pg_advisory_xact_lock(:ns, hashtext(:schema))"),
             {"ns": PG_INIT_LOCK_NAMESPACE, "schema": schema or "public"},
         )
-        if schema:
+        if schema and not inspect(conn).has_schema(schema):
             conn.exec_driver_sql(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
         Base.metadata.create_all(conn)
         _add_missing_column(conn, Improvement.__table__.c.ats_score, schema)

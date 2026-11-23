@@ -57,6 +57,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager."""
     # Startup
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    # Complete and verify the backed-up import before any worker or customer
+    # request can observe the PostgreSQL store. Failure leaves SQLite untouched.
+    from app.scripts.durable_store import prepare_durable_store
+
+    await prepare_durable_store()
     if settings.database_url:
         from app.db_url import redact
 
@@ -74,21 +79,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     migrate_legacy_keys()
     if retire_stored_openrouter_key_for_mobile():
-        logger.info("Retired stored OpenRouter key; Railway LLM_API_KEY is now authoritative.")
+        logger.info(
+            "Retired stored OpenRouter key; Railway LLM_API_KEY is now authoritative."
+        )
 
     from app.services.queue_worker import queue_manager
 
     await queue_manager.start()
     from app.services.mobile_jobs import mobile_tailoring_worker
+
     mobile_tailoring_worker.start()
     from app.services.mobile_deletions import mobile_deletion_worker
+
     if settings.mobile_api_enabled:
         mobile_deletion_worker.start()
+    from app.services.durable_pdfs import durable_pdf_backfill
+
+    durable_pdf_backfill.start()
     # PDF renderer uses lazy initialization - will initialize on first use
     # await init_pdf_renderer()
     yield
     # Shutdown - stop durable queue tasks before closing database connections.
     try:
+        await durable_pdf_backfill.stop()
         await mobile_deletion_worker.stop()
         await mobile_tailoring_worker.stop()
     except Exception:

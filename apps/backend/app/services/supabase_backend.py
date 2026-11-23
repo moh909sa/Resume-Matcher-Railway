@@ -1,5 +1,6 @@
 """Server-only Supabase Auth, private Storage, and CV registry integration."""
 
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -120,9 +121,9 @@ class SupabaseBackend:
     async def erase_account_storage(self, owner: str) -> None:
         # List the namespace, not only registry rows: includes interrupted uploads.
         prefix = str(UUID(owner))
-        async def erase_folder(folder: str) -> None:
+        async def erase_folder(folder: str, bucket: str = BUCKET) -> None:
             while True:
-                response = await self._request("POST", f"/storage/v1/object/list/{BUCKET}", json={
+                response = await self._request("POST", f"/storage/v1/object/list/{bucket}", json={
                     "prefix": folder, "limit": 100, "offset": 0,
                     "sortBy": {"column": "name", "order": "asc"},
                 })
@@ -143,10 +144,125 @@ class SupabaseBackend:
                     else:
                         files.append(path)
                 if files:
-                    await self._request("DELETE", f"/storage/v1/object/{BUCKET}", json={"prefixes": files})
+                    await self._request("DELETE", f"/storage/v1/object/{bucket}", json={"prefixes": files})
                 for child in folders:
-                    await erase_folder(child)
+                    await erase_folder(child, bucket)
         await erase_folder(prefix)
+        await erase_folder(prefix, "cv-pdf-artifacts")
+        # Migration archives can include multiple owners. Retire the whole
+        # snapshot on deletion of any included account; never retain their CVs
+        # inside a backup after claiming that their data has been erased.
+        backups = self._json(
+            await self._request(
+                "GET",
+                "/rest/v1/cv_engine_backup_objects",
+                params={"user_id": f"eq.{UUID(owner)}", "select": "storage_path"},
+            )
+        )
+        for row in backups:
+            path = row["storage_path"]
+            if not path.startswith("sqlite-to-supabase/"):
+                raise SupabaseUnavailable("Invalid backup reference")
+            await self._request(
+                "DELETE",
+                "/storage/v1/object/cv-engine-backups",
+                json={"prefixes": [path]},
+            )
+            await self._request(
+                "DELETE",
+                "/rest/v1/cv_engine_backup_objects",
+                params={"storage_path": f"eq.{path}"},
+            )
+
+    async def stored_pdf(
+        self, owner: str, tailoring_id: str, revision: int
+    ) -> bytes | None:
+        """An exact immutable revision; absence never falls back to an older PDF."""
+        rows = self._json(
+            await self._request(
+                "GET",
+                "/rest/v1/cv_pdf_artifacts",
+                params={
+                    "user_id": f"eq.{UUID(owner)}",
+                    "tailoring_id": f"eq.{UUID(tailoring_id)}",
+                    "revision": f"eq.{revision}",
+                    "select": "*",
+                },
+            )
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        path = f"{UUID(owner)}/{UUID(tailoring_id)}/{revision}.pdf"
+        if (
+            row.get("storage_path") != path
+            or row.get("storage_bucket") != "cv-pdf-artifacts"
+        ):
+            raise SupabaseUnavailable("Invalid PDF reference")
+        content = (
+            await self._request(
+                "GET", f"/storage/v1/object/authenticated/cv-pdf-artifacts/{path}"
+            )
+        ).content
+        if (
+            len(content) != row["file_size_bytes"]
+            or hashlib.sha256(content).hexdigest() != row["sha256"]
+        ):
+            raise SupabaseUnavailable("Stored PDF verification failed")
+        return content
+
+    async def persist_pdf(
+        self,
+        owner: str,
+        tailoring_id: str,
+        revision: int,
+        content: bytes,
+        page_count: int,
+    ) -> bytes:
+        """Upload before publishing its manifest; acknowledge only durable bytes."""
+        path = f"{UUID(owner)}/{UUID(tailoring_id)}/{revision}.pdf"
+        # Serialize identical revision renders in PostgreSQL at the caller.
+        existing = await self.stored_pdf(owner, tailoring_id, revision)
+        if existing is not None:
+            return existing
+        response = await self.client.post(
+            f"/storage/v1/object/cv-pdf-artifacts/{path}",
+            content=content,
+            headers={"Content-Type": "application/pdf", "x-upsert": "false"},
+        )
+        if response.status_code in (400, 409):
+            # A simultaneous renderer (or an interrupted manifest write) may
+            # have already uploaded this exact revision. Retain its bytes.
+            stored = await self._request(
+                "GET", f"/storage/v1/object/authenticated/cv-pdf-artifacts/{path}"
+            )
+            content = stored.content
+        elif response.is_error:
+            raise SupabaseUnavailable("PDF storage is unavailable")
+        if not content.startswith(b"%PDF-"):
+            raise SupabaseUnavailable("Invalid PDF artifact")
+        from app.services.page_fit import count_pdf_pages
+
+        await self._request(
+            "POST",
+            "/rest/v1/cv_pdf_artifacts",
+            headers={"Prefer": "resolution=ignore-duplicates,return=minimal"},
+            params={"on_conflict": "tailoring_id,revision"},
+            json={
+                "user_id": owner,
+                "tailoring_id": tailoring_id,
+                "revision": revision,
+                "storage_path": path,
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "file_size_bytes": len(content),
+                "page_count": count_pdf_pages(content) or page_count,
+            },
+        )
+        verified = await self.stored_pdf(owner, tailoring_id, revision)
+        if verified is None:
+            raise SupabaseUnavailable("PDF persistence was not acknowledged")
+        return verified
+
 
     async def erase_account_records(self, owner: str) -> None:
         for table, key in (("user_tailoring_progress", "user_id"), ("user_tailored_cvs", "user_id"),
