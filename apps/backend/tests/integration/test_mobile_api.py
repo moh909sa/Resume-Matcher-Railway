@@ -14,7 +14,9 @@ from pydantic import SecretStr
 
 from app.config import settings
 from app.database import Database
+from app.llm import LLMConfig
 from app.main import app
+from app.mobile_consent import current_disclosure
 from app.resume_ownership import resume_owner
 from app.routers import resumes
 
@@ -32,6 +34,8 @@ class SupabaseHTTP:
         self.objects: dict[str, bytes] = {}
         self.calls: list[httpx.Request] = []
         self.fail_rpc = False
+        version = current_disclosure()[1]
+        self.consent = {(A, version): True, (B, version): True}
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         self.calls.append(request)
@@ -51,6 +55,14 @@ class SupabaseHTTP:
             and request.headers.get("content-type", "").startswith("application/json")
             else None
         )
+        if path == "/rest/v1/mobile_ai_consent":
+            if request.method == "POST":
+                self.consent[payload["user_id"], payload["version"]] = payload["accepted"]
+                return httpx.Response(201)
+            owner = request.url.params["user_id"].removeprefix("eq.")
+            version = request.url.params["version"].removeprefix("eq.")
+            accepted = self.consent.get((owner, version))
+            return httpx.Response(200, json=[] if accepted is None else [{"accepted": accepted}])
         if path == "/rest/v1/rpc/reserve_user_resume":
             if (
                 sum(
@@ -131,6 +143,13 @@ def upstream(
     monkeypatch.setattr(settings, "mobile_api_enabled", True)
     monkeypatch.setattr(settings, "supabase_url", URL)
     monkeypatch.setattr(settings, "supabase_secret_key", SecretStr(KEY))
+    from app import llm
+
+    monkeypatch.setattr(llm, "get_llm_config", lambda: LLMConfig(provider="openai", model="unit-model", api_key="fixture"))
+    monkeypatch.setenv("MOBILE_AI_DISCLOSURE", json.dumps({
+        "provider": "openai", "model": "unit-model", "recipients": ["Test provider"],
+        "retention": "Fixture notice.",
+    }))
     server = SupabaseHTTP()
     respx_mock.route(url__startswith=URL).mock(side_effect=server.handle)
     return server
@@ -178,6 +197,45 @@ async def upload(
             )
         },
     )
+
+
+@pytest.mark.integration
+async def test_ai_consent_requires_current_owner_permission(
+    client: httpx.AsyncClient, upstream: SupabaseHTTP, original: bytes, parsed,
+):
+    upstream.consent.clear()
+    path = "/api/v1/mobile/ai-consent"
+    a = {"Authorization": "Bearer token-a"}
+    b = {"Authorization": "Bearer token-b"}
+    assert (await client.get(path)).status_code == 401
+    notice = (await client.get(path, headers=a)).json()
+    assert notice["accepted"] is None
+    assert (await upload(client, original)).status_code == 428
+    assert not upstream.objects and not upstream.rows
+    resume_id = "d29be36d-73ba-4e2c-a4ca-726f013510f8"
+    job = {"resume_id": resume_id, "job_description": "An engineering role with relevant requirements. " * 3}
+    mobile = "/api/v1/mobile"
+    for route, data in (
+        (f"/resumes/{resume_id}/retry-processing", None),
+        ("/tailor/jobs", job),
+        ("/tailor/preview", job),
+        (f"/tailor/{resume_id}/keywords", {
+            "expected_preview_id": "fixture-preview",
+            "keywords": [{"keyword": "Python", "attested": False}],
+        }),
+    ):
+        response = await client.post(mobile + route, headers=a, json=data)
+        assert response.status_code == 428, response.text
+    assert (await client.put(path, headers=a, json={"version": "0" * 64, "accepted": True})).status_code == 409
+    for decision in (False, True, False):
+        response = await client.put(path, headers=a, json={"version": notice["version"], "accepted": decision})
+        assert response.status_code == 200, response.text
+        assert response.json()["accepted"] is decision
+        assert (await client.get(path, headers=a)).json()["accepted"] is decision
+        assert (await client.get(path, headers=b)).json()["accepted"] is None
+        assert (await upload(client, original)).status_code == (201 if decision else 428)
+    assert (await client.get("/api/v1/mobile/resumes", headers=a)).status_code == 200
+    assert len(upstream.rows) == 1
 
 
 @pytest.mark.integration

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.ai_budget import AIOperationRoute
 from app.database import db
 from app.mobile_access import current_user, supabase_backend
+from app.mobile_consent import ai_processing_user
 from app.resume_ownership import resume_owner
 from app.routers.resumes import (
     apply_keywords_endpoint,
@@ -164,7 +165,7 @@ def _public_job(row: dict[str, Any]) -> dict[str, Any]:
 @router.post("/tailor/jobs", status_code=202)
 async def enqueue_mobile_tailor(
     body: MobileTailorRequest,
-    user_id: str = Depends(current_user),
+    user_id: str = Depends(ai_processing_user),
     backend: SupabaseBackend = Depends(supabase_backend),
 ) -> dict[str, Any]:
     """Idempotently enqueue a durable AI job and return immediately to iOS."""
@@ -248,7 +249,7 @@ async def get_mobile_tailor_progress(
 @router.post("/tailor/preview", status_code=201)
 async def preview_mobile_tailor(
     body: MobileTailorRequest,
-    user_id: str = Depends(current_user),
+    user_id: str = Depends(ai_processing_user),
     backend: SupabaseBackend = Depends(supabase_backend),
 ) -> dict[str, Any]:
     """Run full tailoring and report ACTUAL stages while POST is in flight."""
@@ -366,7 +367,7 @@ async def get_mobile_tailor_review(
 async def apply_mobile_tailor_keywords(
     tailoring_id: UUID,
     body: MobileApplyKeywordsRequest,
-    user_id: str = Depends(current_user),
+    user_id: str = Depends(ai_processing_user),
     backend: SupabaseBackend = Depends(supabase_backend),
 ) -> dict[str, Any]:
     """Apply real job keywords repeatedly without changing the original CV."""

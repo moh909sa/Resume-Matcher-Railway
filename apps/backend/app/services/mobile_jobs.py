@@ -20,6 +20,7 @@ from fastapi import HTTPException
 from app.ai_budget import operation_budget
 from app.config import settings
 from app.database import db
+from app.mobile_consent import consent_scope, require_consent
 from app.resume_ownership import resume_owner
 from app.routers.resumes import improve_resume_preview_endpoint
 from app.schemas.models import ImproveResumeRequest, PageFitSettings
@@ -51,7 +52,8 @@ async def process_queued_mobile_job(backend: SupabaseBackend, job: dict[str, Any
     try:
         # The durable job owns its budget independently of HTTP/proxy timeouts.
         async with operation_budget(settings.mobile_tailoring_timeout_seconds):
-            with resume_owner(user_id):
+            version = await require_consent(backend, user_id)
+            with resume_owner(user_id), consent_scope(backend, user_id, version):
                 if not source_id or await backend.get_record(user_id, source_id) is None:
                     raise RuntimeError("Original CV no longer exists")
                 source = await db.get_resume(source_id)
@@ -96,6 +98,11 @@ async def process_queued_mobile_job(backend: SupabaseBackend, job: dict[str, Any
         # reconciles the saved result or reports "interrupted" instead of
         # triggering a second potentially billable OpenRouter operation.
         raise
+    except HTTPException as error:
+        if error.status_code == 428:
+            failure_code = "consent_required"
+        else:
+            failure_code = "processing_failed"
     except TimeoutError:
         failure_code = "processing_timeout"
         logger.warning("Background tailoring timed out (no CV data logged)")

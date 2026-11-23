@@ -71,6 +71,7 @@ async def test_recovered_finished_job_reuses_saved_preview_without_ai():
 
 @pytest.mark.asyncio
 async def test_worker_success_persists_one_owned_draft(monkeypatch):
+    monkeypatch.setattr(mobile_jobs, "require_consent", AsyncMock(return_value="approved"))
     budgets: list[float] = []
 
     @asynccontextmanager
@@ -118,6 +119,7 @@ async def test_worker_success_persists_one_owned_draft(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_worker_failure_does_not_generate_an_automatic_retry(monkeypatch):
+    monkeypatch.setattr(mobile_jobs, "require_consent", AsyncMock(return_value="approved"))
     owner, resume, progress, claim, job_id = (str(uuid4()) for _ in range(5))
     job = {"user_id": owner, "id": progress, "source_resume_id": resume,
            "job_description": "Reliability engineering job. " * 4,
@@ -138,6 +140,25 @@ async def test_worker_failure_does_not_generate_an_automatic_retry(monkeypatch):
     assert backend.finish_mobile_job.await_args.args[1] == "failed"
     backend.create_tailored_record.assert_not_awaited()
     delete.assert_awaited_once_with(job_id)
+
+
+@pytest.mark.asyncio
+async def test_worker_does_not_send_data_after_consent_is_withdrawn(monkeypatch):
+    owner, resume, progress = (str(uuid4()) for _ in range(3))
+    backend = AsyncMock()
+    backend.find_tailored_for_progress.return_value = None
+    gate = AsyncMock(side_effect=HTTPException(428, "Consent required"))
+    engine = AsyncMock()
+    monkeypatch.setattr(mobile_jobs, "require_consent", gate)
+    monkeypatch.setattr(mobile_jobs, "improve_resume_preview_endpoint", engine)
+    await mobile_jobs.process_queued_mobile_job(
+        backend, {"user_id": owner, "source_resume_id": resume, "id": progress},
+    )
+    gate.assert_awaited_once_with(backend, owner)
+    backend.get_record.assert_not_awaited()
+    engine.assert_not_awaited()
+    assert backend.finish_mobile_job.await_args.args[1] == "failed"
+    assert backend.finish_mobile_job.await_args.kwargs["error_code"] == "consent_required"
 
 
 @pytest.mark.asyncio
