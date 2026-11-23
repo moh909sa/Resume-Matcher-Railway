@@ -210,3 +210,16 @@ def test_concurrent_snapshot_replacements_are_serialized(
     assert maximum_active_replacements == 1
     assert json.loads(config_path.read_text()) in snapshots
     assert list(tmp_path.glob(".config.json.*.tmp")) == []
+
+
+def test_additional_cors_origins_preserve_existing_origins():
+    from app.config import Settings
+
+    config = Settings(
+        cors_origins=["https://existing.example"],
+        cors_additional_origins=["http://localhost:58832", "https://existing.example"],
+        frontend_base_url="https://frontend.example",
+    )
+    assert config.effective_cors_origins == [
+        "https://existing.example", "http://localhost:58832", "https://frontend.example"
+    ]

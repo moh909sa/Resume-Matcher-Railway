@@ -460,10 +460,12 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
 
+    cors_additional_origins: list[str] = []
+
     @property
     def effective_cors_origins(self) -> list[str]:
         """CORS origins including frontend_base_url for production deployments."""
-        origins = list(self.cors_origins)
+        origins = list(dict.fromkeys([*self.cors_origins, *self.cors_additional_origins]))
         url = self.frontend_base_url.strip().rstrip("/")
         if url and url not in origins:
             origins.append(url)
