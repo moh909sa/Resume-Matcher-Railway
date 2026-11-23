@@ -25,6 +25,11 @@ class Disclosure(BaseModel):
     api_base: str | None = None
     recipients: list[str] = Field(min_length=1, max_length=5)
     retention: str = Field(min_length=1, max_length=480)
+    data_use: str = Field(
+        default="receive CV text and any contact details it contains, job descriptions and selected keywords to read and tailor your CV.",
+        min_length=1,
+        max_length=480,
+    )
     openrouter_only: list[str] = Field(default_factory=list, max_length=5)
 
 
@@ -38,6 +43,7 @@ class ConsentView(BaseModel):
     version: str
     recipients: list[str]
     retention: str
+    data_use: str
     accepted: bool | None
 
 
@@ -92,6 +98,7 @@ async def read_consent(backend: SupabaseBackend, owner: str) -> ConsentView:
         version=version,
         recipients=notice.recipients,
         retention=notice.retention,
+        data_use=notice.data_use,
         accepted=await backend.ai_consent(owner, version),
     )
 
@@ -110,10 +117,17 @@ async def save_consent(
         recipients=notice.recipients,
         retention=notice.retention,
         accepted=decision.accepted,
+        data_use=notice.data_use,
     )
 
 
 async def require_consent(backend: SupabaseBackend, owner: str) -> str:
+    from app.database import db
+    from app.resume_ownership import resume_owner
+
+    with resume_owner(owner):
+        if await db.account_deleting(owner):
+            raise HTTPException(403, "Account deletion is in progress")
     _, version = current_disclosure()
     if await backend.ai_consent(owner, version) is not True:
         raise HTTPException(428, "Allow AI processing before sending CV data.")
@@ -149,6 +163,12 @@ async def consent_routing(config: "LLMConfig") -> dict[str, object] | None:
     if scope is None:
         return None
     backend, owner, accepted_version = scope
+    from app.database import db
+    from app.resume_ownership import resume_owner
+
+    with resume_owner(owner):
+        if await db.account_deleting(owner):
+            raise HTTPException(403, "Account deletion is in progress")
     notice, current_version = current_disclosure(config)
     if (
         current_version != accepted_version

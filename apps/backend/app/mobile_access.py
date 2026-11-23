@@ -8,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.account_activity import account_activity
 from app.config import settings
 from app.services.supabase_backend import (
     InvalidSession,
@@ -36,7 +37,7 @@ async def supabase_backend() -> AsyncIterator[SupabaseBackend]:
 async def current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
     backend: SupabaseBackend = Depends(supabase_backend),
-) -> str:
+) -> AsyncIterator[str]:
     """Return only the identity confirmed by this project's Supabase Auth."""
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
@@ -45,13 +46,23 @@ async def current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        return await backend.verify_user(credentials.credentials)
+        owner = await backend.verify_user(credentials.credentials)
     except InvalidSession as error:
         raise HTTPException(
             status_code=401,
             detail="Sign in again",
             headers={"WWW-Authenticate": "Bearer"},
         ) from error
+    from app.database import db
+    from app.resume_ownership import resume_owner
+
+    with resume_owner(owner):
+        if await db.account_deleting(owner):
+            raise HTTPException(
+                403, "Account deletion is in progress. Resume it in My Account."
+            )
+    with account_activity(owner):
+        yield owner
 
 
 class MobileApiGuardMiddleware:
@@ -80,14 +91,20 @@ class MobileApiGuardMiddleware:
             # never a general bypass of mobile authorization or customer APIs.
             draft_prefix = "/api/v1/resumes/render-drafts/"
             peer = (scope.get("client") or ("", 0))[0]
-            draft_token = path[len(draft_prefix):] if path.startswith(draft_prefix) else ""
+            draft_token = (
+                path[len(draft_prefix) :] if path.startswith(draft_prefix) else ""
+            )
             internal_page_fit = (
                 scope["method"] == "GET"
                 and peer in {"127.0.0.1", "::1"}
                 and len(draft_token) == 32
                 and all(c in "0123456789abcdef" for c in draft_token)
             )
-            if not public and not internal_page_fit and not path.startswith("/api/v1/mobile/"):
+            if (
+                not public
+                and not internal_page_fit
+                and not path.startswith("/api/v1/mobile/")
+            ):
                 await JSONResponse({"detail": "Not found"}, status_code=404)(
                     scope, receive, send
                 )

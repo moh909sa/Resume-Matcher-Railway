@@ -11,11 +11,19 @@ from contextvars import ContextVar
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import ORMExecuteState, Session, with_loader_criteria
 
-from app.models import Resume
+from app.models import (
+    Application,
+    Improvement,
+    Job,
+    MobileAccountDeletion,
+    QueueItem,
+    Resume,
+    TailoringPreview,
+)
 
 _owner: ContextVar[str | None] = ContextVar("resume_owner", default=None)
 
@@ -55,6 +63,8 @@ def _scope_resume_queries(state: ORMExecuteState) -> None:
     """Apply the same owner predicate to ORM reads, updates and deletes."""
     if not state.is_orm_statement:
         return
+    if state.is_insert or state.is_update or state.is_delete:
+        _check_account_writable(state.session)
     if state.is_select or state.is_update or state.is_delete:
         owner = state.session.info.get("resume_owner")
         criterion = (
@@ -69,11 +79,33 @@ def _scope_resume_queries(state: ORMExecuteState) -> None:
 def _protect_resume_writes(session: Session, *_args: Any) -> None:
     """Stamp inserts and reject ownership reassignment on normal ORM writes."""
     owner = session.info.get("resume_owner")
+    _check_account_writable(session)
     for row in session.new:
-        if isinstance(row, Resume):
+        if isinstance(
+            row, (Resume, Job, TailoringPreview, Improvement, Application, QueueItem)
+        ):
             if row.owner_id not in (None, owner):
                 raise ValueError("Cannot assign another resume owner")
             row.owner_id = owner
     for row in set(session.dirty) | set(session.deleted):
-        if isinstance(row, Resume) and row.owner_id != owner:
+        if isinstance(
+            row, (Resume, Job, TailoringPreview, Improvement, Application, QueueItem)
+        ) and row.owner_id not in (None, owner):
             raise ValueError("Cannot change resume ownership")
+
+
+def _check_account_writable(session: Session) -> None:
+    """Check within the writer transaction, including operations already in flight."""
+    owner = session.info.get("resume_owner")
+    if owner and not session.info.get("account_deletion"):
+        deleting = (
+            session.connection()
+            .execute(
+                select(MobileAccountDeletion.owner_id).where(
+                    MobileAccountDeletion.owner_id == owner,
+                )
+            )
+            .first()
+        )
+        if deleting:
+            raise ValueError("Account deletion is in progress")

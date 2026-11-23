@@ -14,7 +14,16 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.schema import CreateColumn
 
-from app.models import Base, Improvement, MobileEditorRevision, Resume
+from app.models import (
+    Application,
+    Base,
+    Improvement,
+    Job,
+    MobileEditorRevision,
+    QueueItem,
+    Resume,
+    TailoringPreview,
+)
 
 __all__ = [
     "Base",
@@ -125,6 +134,7 @@ def _init_postgres(engine: Engine, schema: str | None) -> None:
         _add_missing_column(conn, Resume.__table__.c.template_settings, schema)
         _add_missing_column(conn, MobileEditorRevision.__table__.c.layout, schema)
         _migrate_resume_owners(conn, schema)
+        _migrate_artifact_owners(conn, schema)
 
 
 def _migrate_resume_owners(conn: Connection, schema: str | None = None) -> None:
@@ -182,6 +192,24 @@ def _migrate_resume_owners(conn: Connection, schema: str | None = None) -> None:
                 )
 
 
+def _migrate_artifact_owners(conn: Connection, schema: str | None = None) -> None:
+    """Recover ownership from existing source links; never guess an orphan's owner."""
+    for model, source in (
+        (Job, Job.resume_id),
+        (TailoringPreview, TailoringPreview.source_id),
+        (Improvement, Improvement.original_resume_id),
+        (Application, Application.resume_id),
+        (QueueItem, QueueItem.resume_id),
+    ):
+        _add_missing_column(conn, model.__table__.c.owner_id, schema)
+        owner = (
+            select(Resume.owner_id).where(Resume.resume_id == source).scalar_subquery()
+        )
+        conn.execute(
+            update(model).where(model.owner_id.is_(None)).values(owner_id=owner)
+        )
+
+
 def init_models_sync(engine: Engine, schema: str | None = None) -> None:
     """Create all tables (idempotent) using a sync engine connection."""
     if engine.dialect.name == "postgresql":
@@ -213,6 +241,7 @@ def init_models_sync(engine: Engine, schema: str | None = None) -> None:
         _add_missing_column(conn, Resume.__table__.c.template_settings)
         _add_missing_column(conn, MobileEditorRevision.__table__.c.layout)
         _migrate_resume_owners(conn)
+        _migrate_artifact_owners(conn)
 
         preview_columns = (
             conn.exec_driver_sql("PRAGMA table_info(tailoring_previews)")

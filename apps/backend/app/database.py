@@ -39,6 +39,7 @@ from app.models import (
     Application,
     Improvement,
     Job,
+    MobileAccountDeletion,
     MobileEditorRevision,
     QueueItem,
     Resume,
@@ -1581,6 +1582,36 @@ class Database:
                 "total_improvements": int(improvements or 0),
                 "has_master_resume": master.first() is not None,
             }
+
+    async def mark_account_deleting(self, owner: str, receipt_hash: str) -> None:
+        """Serialize the deletion fence with every document writer."""
+        async with self._write_session() as session:
+            session.info["account_deletion"] = True
+            existing = await session.get(MobileAccountDeletion, owner)
+            if existing is not None and existing.receipt_hash != receipt_hash:
+                raise ValueError("Use the existing deletion receipt")
+            if existing is None:
+                session.add(MobileAccountDeletion(owner_id=owner, receipt_hash=receipt_hash))
+            await session.commit()
+
+    async def account_deleting(self, owner: str) -> bool:
+        async with self._session() as session:
+            return await session.get(MobileAccountDeletion, owner) is not None
+
+    async def erase_account_documents(self, owner: str) -> None:
+        """Remove only this owner's engine documents and every linked artifact."""
+        async with self._write_session() as session:
+            session.info["account_deletion"] = True
+            ids = list((await session.scalars(select(Resume.resume_id).where(Resume.owner_id == owner))).all())
+            jobs = list((await session.scalars(select(Job.job_id).where(or_(Job.resume_id.in_(ids), Job.owner_id == owner)))).all())
+            await session.execute(delete(MobileEditorRevision).where(MobileEditorRevision.owner_id == owner))
+            await session.execute(delete(TailoringPreview).where(or_(TailoringPreview.owner_id == owner, TailoringPreview.source_id.in_(ids), TailoringPreview.result_resume_id.in_(ids), TailoringPreview.job_id.in_(jobs))))
+            await session.execute(delete(Application).where(or_(Application.owner_id == owner, Application.resume_id.in_(ids), Application.master_resume_id.in_(ids), Application.job_id.in_(jobs))))
+            await session.execute(delete(Improvement).where(or_(Improvement.owner_id == owner, Improvement.original_resume_id.in_(ids), Improvement.tailored_resume_id.in_(ids), Improvement.job_id.in_(jobs))))
+            await session.execute(delete(QueueItem).where(or_(QueueItem.owner_id == owner, QueueItem.resume_id.in_(ids), QueueItem.tailored_resume_id.in_(ids), QueueItem.job_id.in_(jobs))))
+            await session.execute(delete(Job).where(Job.job_id.in_(jobs)))
+            await session.execute(delete(Resume).where(Resume.owner_id == owner))
+            await session.commit()
 
     async def reset_database(self) -> None:
         """Reset by truncating user-document tables and clearing uploads.

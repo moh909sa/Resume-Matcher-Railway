@@ -37,6 +37,15 @@ class Base(DeclarativeBase):
     """Declarative base shared by every table."""
 
 
+class MobileAccountDeletion(Base):
+    """Content-free fence retained so late operations cannot restore an account."""
+
+    __tablename__ = "mobile_account_deletions"
+    owner_id: Mapped[str] = mapped_column(String, primary_key=True)
+    receipt_hash: Mapped[str] = mapped_column(String, unique=True)
+    complete: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class Resume(Base):
     """A resume document (master or tailored)."""
 
@@ -125,6 +134,7 @@ class Job(Base):
     """
 
     __tablename__ = "jobs"
+    owner_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
     job_id: Mapped[str] = mapped_column(String, primary_key=True)
     content: Mapped[str] = mapped_column(Text)
@@ -137,6 +147,7 @@ class Improvement(Base):
     """A tailoring result linking an original resume, a tailored resume, and a job."""
 
     __tablename__ = "improvements"
+    owner_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
     request_id: Mapped[str] = mapped_column(String, primary_key=True)
     original_resume_id: Mapped[str] = mapped_column(String)
@@ -154,6 +165,7 @@ class TailoringPreview(Base):
     """An accepted preview, bounded confirmation claim and immutable result."""
 
     __tablename__ = "tailoring_previews"
+    owner_id: Mapped[str | None] = mapped_column(String, nullable=True)
     __table_args__ = (
         Index(
             "ix_preview_compatibility",
@@ -190,6 +202,7 @@ class Application(Base):
     """A Kanban application-tracker card."""
 
     __tablename__ = "applications"
+    owner_id: Mapped[str | None] = mapped_column(String, nullable=True)
     __table_args__ = (
         # Concurrency-safe dedupe: a card is unique per (job, applied resume).
         # The app-level select-then-insert relies on this to collapse races.
@@ -231,6 +244,7 @@ class QueueItem(Base):
     """An individual job tailoring request in the sequential processing queue."""
 
     __tablename__ = "queue_items"
+    owner_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
     item_id: Mapped[str] = mapped_column(String, primary_key=True)
     resume_id: Mapped[str] = mapped_column(String, index=True)

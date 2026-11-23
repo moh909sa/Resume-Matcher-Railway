@@ -27,9 +27,10 @@ async def test_pins_openrouter_recipient_and_blocks_withdrawal_or_route_change(
     backend.ai_consent.return_value = True
     transport = AsyncMock()
 
-    with consent_scope(backend, "owner", version):
+    owner = "760c63e9-c782-4631-a1fb-471e988740a1"
+    with consent_scope(backend, owner, version):
         await _route_acompletion(config, transport, model="resume-matcher")
-        backend.ai_consent.assert_awaited_once_with("owner", version)
+        backend.ai_consent.assert_awaited_once_with(owner, version)
         assert transport.acompletion.await_args.kwargs["extra_body"] == {
             "provider": {"only": ["example"], "allow_fallbacks": False},
         }

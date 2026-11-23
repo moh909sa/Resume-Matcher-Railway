@@ -11,12 +11,12 @@ in-flight jobs are marked interrupted unless a saved result is recoverable.
 import asyncio
 import logging
 from contextlib import suppress
-from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 from fastapi import HTTPException
 
+from app.account_activity import account_activity
 from app.ai_budget import operation_budget
 from app.config import settings
 from app.database import db
@@ -26,7 +26,9 @@ from app.routers.resumes import improve_resume_preview_endpoint
 from app.schemas.models import ImproveResumeRequest, PageFitSettings
 from app.services.mobile_progress import finished_progress_update, mirror_engine_stages
 from app.services.supabase_backend import (
-    MobileJobLeaseLost, SupabaseBackend, SupabaseUnavailable,
+    MobileJobLeaseLost,
+    SupabaseBackend,
+    SupabaseUnavailable,
 )
 
 logger = logging.getLogger(__name__)
@@ -164,6 +166,10 @@ class MobileTailoringWorker:
                 await self._task
             self._task = None
 
+    async def _owned_job(self, backend: SupabaseBackend, job: dict[str, Any]) -> None:
+        with account_activity(job["user_id"]):
+            await process_queued_mobile_job(backend, job)
+
     async def _loop(self) -> None:
         key = settings.supabase_secret_key.get_secret_value()
         if not settings.supabase_url or not key:
@@ -189,7 +195,13 @@ class MobileTailoringWorker:
                         job = await backend.claim_mobile_job(
                             item["user_id"], item["id"])
                         if job:
-                            await process_queued_mobile_job(backend, job)
+                            task = asyncio.create_task(self._owned_job(backend, job))
+                            try:
+                                await task
+                            except asyncio.CancelledError:
+                                if asyncio.current_task().cancelling():
+                                    raise
+                                # Account deletion cancels only this job, not the worker.
                         continue
                 except asyncio.CancelledError:
                     raise

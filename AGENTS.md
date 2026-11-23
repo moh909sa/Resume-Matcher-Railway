@@ -17,4 +17,8 @@ with additive immutable snapshots and mutation receipts in `mobile_editor_revisi
 See [docs/mobile-editor.md](docs/mobile-editor.md) for revision-safe saves, job-match
 freshness and authenticated snapshot PDF export. Uploaded originals remain unchanged.
 
+Mobile privacy uses versioned server disclosures and account-scoped consent. Confirmed
+account deletion uses a persistent write fence and a private receipt for safe retries
+after Auth removal. See [docs/mobile-account-privacy.md](docs/mobile-account-privacy.md).
+
 If the user wants to **change** Resume Matcher itself, follow [`.claude/CLAUDE.md`](.claude/CLAUDE.md) and [CONTRIBUTING.md](.github/CONTRIBUTING.md). Setup for development is in [SETUP.md](SETUP.md).

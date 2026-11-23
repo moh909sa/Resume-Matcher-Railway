@@ -174,6 +174,8 @@ app.add_middleware(HostGuardMiddleware, allowed_hosts=settings.effective_allowed
 # Include routers
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(mobile_router, prefix="/api/v1")
+from app.mobile_privacy import router as mobile_privacy_router
+app.include_router(mobile_privacy_router, prefix="/api/v1")
 app.include_router(mobile_tailoring_router, prefix="/api/v1")
 app.include_router(mobile_editor_router, prefix="/api/v1")
 app.include_router(config_router, prefix="/api/v1")

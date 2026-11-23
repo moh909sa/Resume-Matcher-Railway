@@ -1,11 +1,10 @@
 """Server-only Supabase Auth, private Storage, and CV registry integration."""
 
 import logging
-from typing import Any
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from typing import Any
 from urllib.parse import quote
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 
@@ -89,6 +88,73 @@ class SupabaseBackend:
         )):
             raise SupabaseUnavailable("Invalid AI consent response")
         return rows[0]["accepted"] if rows else None
+
+    async def begin_account_deletion(self, owner: str, receipt_hash: str) -> None:
+        await self._request("POST", "/rest/v1/mobile_account_deletions", headers={
+            "Prefer": "resolution=ignore-duplicates,return=minimal",
+        }, params={"on_conflict": "user_id"}, json={
+            "user_id": owner, "receipt_hash": receipt_hash, "status": "deleting",
+        })
+        record = await self.deletion_receipt(receipt_hash)
+        if record is None or record.get("user_id") != owner:
+            raise SupabaseUnavailable("Use the existing deletion receipt")
+
+    async def deletion_receipt(self, receipt_hash: str) -> dict[str, Any] | None:
+        response = await self._request("GET", "/rest/v1/mobile_account_deletions", params={
+            "receipt_hash": f"eq.{receipt_hash}", "select": "user_id,status", "limit": "1",
+        })
+        rows = self._json(response)
+        if not isinstance(rows, list) or len(rows) > 1:
+            raise SupabaseUnavailable("Invalid deletion receipt")
+        return rows[0] if rows else None
+
+    async def erase_account_storage(self, owner: str) -> None:
+        # List the namespace, not only registry rows: includes interrupted uploads.
+        prefix = str(UUID(owner))
+        async def erase_folder(folder: str) -> None:
+            while True:
+                response = await self._request("POST", f"/storage/v1/object/list/{BUCKET}", json={
+                    "prefix": folder, "limit": 100, "offset": 0,
+                    "sortBy": {"column": "name", "order": "asc"},
+                })
+                rows = self._json(response)
+                if not isinstance(rows, list):
+                    raise SupabaseUnavailable("Invalid storage listing")
+                if not rows:
+                    break
+                files: list[str] = []
+                folders: list[str] = []
+                for row in rows:
+                    name = row.get("name") if isinstance(row, dict) else None
+                    if not isinstance(name, str) or "/" in name or name in ("", ".", ".."):
+                        raise SupabaseUnavailable("Invalid storage path")
+                    path = f"{folder}/{name}"
+                    if row.get("id") is None:
+                        folders.append(path)
+                    else:
+                        files.append(path)
+                if files:
+                    await self._request("DELETE", f"/storage/v1/object/{BUCKET}", json={"prefixes": files})
+                for child in folders:
+                    await erase_folder(child)
+        await erase_folder(prefix)
+
+    async def erase_account_records(self, owner: str) -> None:
+        for table, key in (("user_tailoring_progress", "user_id"), ("user_tailored_cvs", "user_id"),
+                           ("user_resumes", "user_id"), ("mobile_ai_consent", "user_id"), ("profiles", "id")):
+            await self._request("DELETE", f"/rest/v1/{table}", params={key: f"eq.{UUID(owner)}"})
+
+    async def erase_auth_user(self, owner: str) -> None:
+        response = await self.client.request(
+            "DELETE", f"/auth/v1/admin/users/{UUID(owner)}", json={"should_soft_delete": False},
+        )
+        if response.status_code not in (200, 204, 404):
+            raise SupabaseUnavailable("Authentication deletion is unavailable")
+
+    async def finish_account_deletion(self, receipt_hash: str) -> None:
+        await self._request("PATCH", "/rest/v1/mobile_account_deletions", params={
+            "receipt_hash": f"eq.{receipt_hash}",
+        }, json={"status": "complete"})
 
     async def save_ai_consent(self, owner: str, version: str, accepted: bool) -> None:
         await self._request(
