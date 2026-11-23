@@ -20,6 +20,7 @@ from app.models import (
     Improvement,
     Job,
     MobileAccountDeletion,
+    MobileEditorRevision,
     QueueItem,
     Resume,
     TailoringPreview,
@@ -67,12 +68,13 @@ def _scope_resume_queries(state: ORMExecuteState) -> None:
         _check_account_writable(state.session)
     if state.is_select or state.is_update or state.is_delete:
         owner = state.session.info.get("resume_owner")
-        criterion = (
-            Resume.owner_id.is_(None) if owner is None else Resume.owner_id == owner
-        )
-        state.statement = state.statement.options(
-            with_loader_criteria(Resume, criterion, include_aliases=True)
-        )
+        # PostgreSQL shares the private schema across owners and legacy tools.
+        # Scope every customer entity, including session.get() identity reads.
+        for model in (Resume, Job, TailoringPreview, Improvement, Application, QueueItem, MobileEditorRevision):
+            criterion = model.owner_id.is_(None) if owner is None else model.owner_id == owner
+            state.statement = state.statement.options(
+                with_loader_criteria(model, criterion, include_aliases=True)
+            )
 
 
 @event.listens_for(ResumeOwnerSession, "before_flush")

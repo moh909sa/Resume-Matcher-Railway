@@ -45,13 +45,13 @@ async def test_deletion_removes_only_owner_data_and_blocks_stale_writers(isolate
         await isolated_db.erase_account_documents(A)
         assert await isolated_db.list_resumes() == []
         async with isolated_db._session() as session:
-            assert (await session.scalars(select(Job.content))).all() == [
-                "Private job B"
-            ]
+            assert not (await session.scalars(select(Job.content))).all()
             assert not (await session.scalars(select(MobileEditorRevision))).all()
         with pytest.raises(ValueError, match="deletion"):
             await isolated_db.create_resume_atomic_master("Late resurrection")
     with resume_owner(B):
+        async with isolated_db._session() as session:
+            assert (await session.scalars(select(Job.content))).all() == ["Private job B"]
         assert (await isolated_db.get_resume(other["resume_id"]))[
             "content"
         ] == "Private CV B"
